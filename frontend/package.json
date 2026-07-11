@@ -1,5 +1,5 @@
 {
-  "name": "quantum-composer-lite-frontend",
+  "name": "quantum-composer-frontend",
   "version": "1.0.0",
   "private": true,
   "scripts": {

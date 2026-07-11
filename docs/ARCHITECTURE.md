@@ -53,3 +53,44 @@ If no measurement exists, simulation uses a copied circuit with `measure_all` an
 - No IBM token is requested, stored, or transmitted. `hardware.py` is only a future boundary.
 
 Frontend boundaries: `GatePalette`; `CircuitGrid`/`QubitRow`/`GateCell`; `CircuitSettings`; `PresetCircuits`; `CodePanel`; and `ResultsPanel`/`Histogram`. `lib/api.ts` is the sole transport layer.
+
+## V2 architecture: multi-engine simulation + cryptography
+
+V2 adds capabilities without changing any V1 endpoint or behaviour.
+
+```text
+CircuitData JSON ──► /circuit/analyze ──► analysis/circuit_analyzer
+                                            + analysis/resource_estimator
+                                            (Clifford test, memory, feasibility)
+
+{circuit, options} ─► /circuit/simulate-v2 ─► engines/router
+                                                │  (honest auto policy)
+                                                ├─ aer_statevector   (exact, ≤30q)
+                                                ├─ aer_mps           (approx, low-ent)
+                                                ├─ aer_stabilizer    (Clifford, large)
+                                                ├─ aer_density_matrix(noise, ≤15q)
+                                                └─ stim_stabilizer   (Clifford, optional)
+
+protocol params ──► /crypto/{bb84,e91,b92,qrng} ─► crypto/* (seeded, protocol-level)
+```
+
+Key modules:
+
+- `analysis/resource_estimator.py` — computes `16*2**n` / `16*4**n` memory in
+  **log space** (never overflows), with safe/heavy/dangerous/infeasible labels.
+- `engines/router.py` — chooses a feasible engine or raises
+  `InfeasibleCircuitError`; it never silently attempts an exponential allocation.
+- `engines/base.py` — engine contracts, typed errors, and optional-dependency
+  detection (`stim_available`, `aer_available`).
+- Optional dependencies (`stim`) are detected at runtime; absence yields a clean
+  availability status, never a crash.
+
+Additional V2 safety:
+
+- Exact engines enforce **absolute hard qubit caps** (statevector 30, density 15)
+  independent of the configured memory budget, preventing accidental OOM.
+- All Qiskit/Aer imports are lazy, so the app imports and serves `/engines` even
+  if Aer is not installed.
+- The advanced request schema relaxes container limits (up to 4096 qubits) but
+  reuses the identical per-operation validation; feasibility is enforced by the
+  estimator and router, not by an arbitrary cap.
