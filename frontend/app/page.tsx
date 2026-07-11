@@ -1,54 +1,36 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { CircuitGrid } from "@/components/CircuitGrid";
-import { CircuitSettings } from "@/components/CircuitSettings";
-import { CodePanel } from "@/components/CodePanel";
-import { GatePalette } from "@/components/GatePalette";
-import { PresetCircuits } from "@/components/PresetCircuits";
-import { ResultsPanel } from "@/components/ResultsPanel";
-import { SimulatorLab } from "@/components/SimulatorLab";
+import { useState } from "react";
+import { AppShell } from "@/components/AppShell";
+import { ComposerMode } from "@/components/ComposerMode";
 import { CryptographyLab } from "@/components/CryptographyLab";
-import { circuitApi } from "@/lib/api";
+import { SimulatorLab } from "@/components/SimulatorLab";
+import type { Mode } from "@/components/ModeTabs";
 import { PRESETS } from "@/lib/presets";
-import { ROTATION_GATES, TWO_QUBIT_GATES } from "@/lib/types";
-import type { CircuitData, CircuitOperation, GateName, Preset, SimulationResult } from "@/lib/types";
+import type { CircuitData } from "@/lib/types";
+
 const cloneCircuit = (c: CircuitData): CircuitData => JSON.parse(JSON.stringify(c));
 
 export default function Home() {
+  const [mode, setMode] = useState<Mode>("composer");
   const [circuit, setCircuit] = useState<CircuitData>(() => cloneCircuit(PRESETS[1].circuit));
-  const [columns, setColumns] = useState(8); const [selectedGate, setSelectedGate] = useState<GateName>("h"); const [theta, setTheta] = useState(Math.PI / 2);
-  const [pending, setPending] = useState<{ qubit: number; moment: number } | null>(null); const [code, setCode] = useState(""); const [qasm, setQasm] = useState("");
-  const [result, setResult] = useState<SimulationResult | null>(null); const [busy, setBusy] = useState(false); const [running, setRunning] = useState(false);
-  const [notice, setNotice] = useState<{ kind: "info" | "error" | "success"; text: string } | null>({ kind: "info", text: "Bell state loaded. Choose a gate, then click a cell." });
-  const [tab, setTab] = useState<"composer" | "simulator" | "crypto">("composer");
-  const sortedCircuit = useMemo(() => ({ ...circuit, operations: [...circuit.operations].sort((a, b) => a.moment - b.moment) }), [circuit]);
-  useEffect(() => { setCode(""); setQasm(""); setResult(null); }, [circuit]);
-  const removeConflicts = (ops: CircuitOperation[], moment: number, qubits: number[]) => ops.filter((item) => item.moment !== moment || !item.qubits.some((q) => qubits.includes(q)));
+  // Circuit handed to the Simulator Lab when opened from the composer.
+  const [labCircuit, setLabCircuit] = useState<CircuitData | null>(null);
 
-  function handleCellClick(qubit: number, moment: number) {
-    const existing = circuit.operations.find((item) => item.moment === moment && item.qubits.includes(qubit));
-    if (existing) { setCircuit((current) => ({ ...current, operations: current.operations.filter((item) => item !== existing) })); setPending(null); setNotice({ kind: "info", text: `${existing.gate.toUpperCase()} removed from t${moment}.` }); return; }
-    if (TWO_QUBIT_GATES.includes(selectedGate)) {
-      if (!pending || pending.moment !== moment) { setPending({ qubit, moment }); setNotice({ kind: "info", text: `${selectedGate.toUpperCase()}: q${qubit} selected. Choose a different qubit in t${moment}.` }); return; }
-      if (pending.qubit === qubit) { setPending(null); return; }
-      const qubits = [pending.qubit, qubit]; const operation: CircuitOperation = { gate: selectedGate, qubits, clbits: [], params: {}, moment };
-      setCircuit((current) => ({ ...current, operations: [...removeConflicts(current.operations, moment, qubits), operation] })); setPending(null); setNotice({ kind: "success", text: `${selectedGate.toUpperCase()} placed on q${qubits[0]} → q${qubits[1]}.` }); return;
-    }
-    if (selectedGate === "measure" && circuit.num_clbits === 0) { setNotice({ kind: "error", text: "Add at least one classical bit before placing a measurement." }); return; }
-    const operation: CircuitOperation = { gate: selectedGate, qubits: selectedGate === "barrier" ? Array.from({ length: circuit.num_qubits }, (_, i) => i) : [qubit], clbits: selectedGate === "measure" ? [Math.min(qubit, circuit.num_clbits - 1)] : [], params: ROTATION_GATES.includes(selectedGate) ? { theta } : {}, moment };
-    setCircuit((current) => ({ ...current, operations: [...removeConflicts(current.operations, moment, operation.qubits), operation] })); setNotice({ kind: "success", text: `${selectedGate.toUpperCase()} placed at t${moment}.` });
+  function changeMode(next: Mode) {
+    setLabCircuit(null); // direct tab clicks start the lab from the current composer circuit
+    setMode(next);
   }
-  function loadPreset(preset: Preset) { const next = cloneCircuit(preset.circuit); const last = Math.max(0, ...next.operations.map((item) => item.moment)); setCircuit(next); setColumns(Math.min(20, Math.max(8, last + 2))); setPending(null); setNotice({ kind: "success", text: `${preset.name} preset loaded.` }); }
-  function changeQubits(value: number) { setCircuit((c) => ({ ...c, num_qubits: value, operations: c.operations.filter((item) => item.qubits.every((q) => q < value)) })); setPending(null); }
-  function changeClbits(value: number) { setCircuit((c) => ({ ...c, num_clbits: value, operations: c.operations.filter((item) => item.clbits.every((bit) => bit < value)) })); }
-  function changeColumns(value: number) { setColumns(value); setCircuit((c) => ({ ...c, operations: c.operations.filter((item) => item.moment < value) })); setPending(null); }
-  async function fetchGeneratedCode() { const validation = await circuitApi.validate(sortedCircuit); const generated = await circuitApi.code(sortedCircuit); setCode(generated.code); try { setQasm((await circuitApi.qasm(sortedCircuit)).qasm); } catch (error) { setQasm(`# OpenQASM export unavailable\n# ${error instanceof Error ? error.message : "Unknown error"}`); } return validation.message; }
-  async function generate() { setBusy(true); try { const message = await fetchGeneratedCode(); setNotice({ kind: "success", text: `${message} Generated outputs are ready.` }); } catch (error) { setNotice({ kind: "error", text: error instanceof Error ? error.message : "Generation failed." }); } finally { setBusy(false); } }
-  async function run() { setBusy(true); setRunning(true); setNotice({ kind: "info", text: "Running on local Qiskit Aer…" }); try { await fetchGeneratedCode(); const simulation = await circuitApi.simulate(sortedCircuit); setResult(simulation); setNotice({ kind: "success", text: `Simulation complete · ${Object.values(simulation.counts).reduce((sum, count) => sum + count, 0)} shots.` }); } catch (error) { setNotice({ kind: "error", text: error instanceof Error ? error.message : "Simulation failed." }); } finally { setBusy(false); setRunning(false); } }
 
-  return <main className="min-h-screen"><header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-xl"><div className="mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-4 px-5 py-4 lg:px-8"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-slate-950 text-lg text-white">ψ</div><div><h1 className="font-semibold tracking-tight text-slate-900">Quantum Composer</h1><p className="text-xs text-slate-400">Composer · multi-engine simulator · quantum cryptography lab</p></div></div><nav className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">{([["composer", "Composer"], ["simulator", "Simulator Lab"], ["crypto", "Cryptography Lab"]] as const).map(([id, label]) => <button key={id} type="button" onClick={() => setTab(id)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${tab === id ? "bg-white text-violet-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>{label}</button>)}</nav><div className="flex items-center gap-2">{tab === "composer" && <><span className="hidden rounded-full bg-slate-100 px-3 py-2 text-xs text-slate-500 sm:inline">{circuit.num_qubits} qubits · {circuit.operations.length} gates</span><button type="button" onClick={() => { setCircuit({ ...circuit, operations: [] }); setPending(null); }} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600">Clear</button><button type="button" disabled={busy} onClick={generate} className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 disabled:opacity-50">Generate</button><button type="button" disabled={busy} onClick={run} className="rounded-lg bg-slate-950 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-slate-300 hover:bg-violet-700 disabled:opacity-50">{busy ? "Working…" : "Run circuit"}</button></>}</div></div></header>
-  {tab === "composer" && <div className="mx-auto grid max-w-[1800px] gap-5 p-5 lg:grid-cols-[260px_minmax(0,1fr)_330px] lg:p-8"><aside className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-panel lg:max-h-[calc(100vh-125px)] lg:overflow-y-auto"><GatePalette selected={selectedGate} theta={theta} onSelect={(gate) => { setSelectedGate(gate); setPending(null); }} onThetaChange={setTheta} /><PresetCircuits presets={PRESETS} onLoad={loadPreset} /></aside><section className="min-w-0 space-y-5"><div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-panel"><div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[.16em] text-violet-500">Circuit workspace</p><h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-800">Compose across time</h2></div><p className="max-w-md text-right text-xs leading-5 text-slate-400">Click an occupied cell to remove it. For CX, CZ, or SWAP, select two qubits in the same time step.</p></div><CircuitGrid numQubits={circuit.num_qubits} numClbits={circuit.num_clbits} columns={columns} operations={circuit.operations} selectedGate={selectedGate} pending={pending} onCellClick={handleCellClick} />{notice && <div className={`mt-4 rounded-lg px-3 py-2 text-xs ${notice.kind === "error" ? "bg-rose-50 text-rose-700" : notice.kind === "success" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"}`}>{notice.text}</div>}</div><ResultsPanel result={result} running={running} /></section><aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-panel lg:max-h-[calc(100vh-125px)] lg:overflow-y-auto"><CircuitSettings qubits={circuit.num_qubits} clbits={circuit.num_clbits} columns={columns} shots={circuit.shots} onQubitsChange={changeQubits} onClbitsChange={changeClbits} onColumnsChange={changeColumns} onShotsChange={(shots) => setCircuit((c) => ({ ...c, shots }))} /><CodePanel circuit={sortedCircuit} code={code} qasm={qasm} /></aside></div>}
-  {tab === "simulator" && <SimulatorLab composerCircuit={sortedCircuit} />}
-  {tab === "crypto" && <CryptographyLab />}
-  <footer className="px-5 pb-8 text-center text-xs text-slate-400">Educational project inspired by visual quantum circuit composers. Not affiliated with or produced by IBM. Large-circuit support applies to structured (Clifford/MPS) circuits only; arbitrary 100-qubit statevector simulation is infeasible.</footer></main>;
+  function openSimulatorLab(next: CircuitData) {
+    setLabCircuit(next);
+    setMode("simulator");
+  }
+
+  return (
+    <AppShell mode={mode} onModeChange={changeMode}>
+      {mode === "composer" && <ComposerMode circuit={circuit} setCircuit={setCircuit} onOpenSimulatorLab={openSimulatorLab} />}
+      {mode === "simulator" && <SimulatorLab composerCircuit={labCircuit ?? circuit} />}
+      {mode === "crypto" && <CryptographyLab />}
+    </AppShell>
+  );
 }

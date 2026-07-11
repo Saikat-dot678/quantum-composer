@@ -1,13 +1,10 @@
+# Runtime dependencies for the Quantum Composer backend.
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
 pydantic>=2.9,<3.0
 qiskit>=1.2,<3.0
 qiskit-aer>=0.15,<1.0
-pytest>=8.3,<9.0
-httpx>=0.27,<1.0
 
-# Optional: enables the very fast, large-scale Clifford/stabilizer engine.
-# The backend runs fine without it (the engine reports itself as unavailable and
-# the router falls back to Aer's 'stabilizer' method). Install with:
-#   pip install stim
-# stim>=1.13,<2.0
+# Optional: the very fast, large-scale Clifford/stabilizer engine (Stim) lives in
+# requirements-stim.txt. Test tooling lives in requirements-dev.txt. The backend
+# runs, and every test passes, without either optional group installed.

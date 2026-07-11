@@ -1,5 +1,37 @@
 "use client";
 import { useState } from "react";
 import type { CircuitData } from "@/lib/types";
-interface Props { circuit: CircuitData; code: string; qasm: string }
-export function CodePanel({ circuit, code, qasm }: Props) { const [tab, setTab] = useState<"json" | "python" | "qasm">("json"); const content = tab === "json" ? JSON.stringify(circuit, null, 2) : tab === "python" ? code || "Generate or run the circuit to view Qiskit code." : qasm || "Generate or run the circuit to view OpenQASM."; return <section className="mt-6 border-t border-slate-200 pt-5"><div className="mb-3 flex items-center justify-between"><h2 className="text-xs font-semibold uppercase tracking-[.16em] text-slate-500">Generated output</h2><button type="button" onClick={() => navigator.clipboard?.writeText(content)} className="text-[11px] font-medium text-violet-600 hover:text-violet-800">Copy</button></div><div className="mb-2 flex rounded-lg bg-slate-100 p-1">{(["json", "python", "qasm"] as const).map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={`flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase ${tab === item ? "bg-white text-slate-800 shadow-sm" : "text-slate-400"}`}>{item === "python" ? "Qiskit" : item}</button>)}</div><pre className="max-h-[390px] overflow-auto rounded-lg bg-slate-950 p-3 text-[11px] leading-5 text-slate-200">{content}</pre></section>; }
+import { CodeBlock } from "./ui/CodeBlock";
+
+interface Props {
+  circuit: CircuitData;
+  code: string;
+  qasm: string;
+}
+
+export function CodePanel({ circuit, code, qasm }: Props) {
+  const [tab, setTab] = useState<"json" | "python" | "qasm">("json");
+  const content =
+    tab === "json"
+      ? JSON.stringify(circuit, null, 2)
+      : tab === "python"
+        ? code || "# Generate or run the circuit to view Qiskit code."
+        : qasm || "// Generate or run the circuit to view OpenQASM.";
+
+  return (
+    <section className="mt-6 border-t border-lab-border pt-5">
+      <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[.18em] text-lab-faint">Generated output</h2>
+      <CodeBlock
+        content={content}
+        maxHeight="max-h-[360px]"
+        activeTab={tab}
+        onTab={(id) => setTab(id as typeof tab)}
+        tabs={[
+          { id: "json", label: "JSON" },
+          { id: "python", label: "Qiskit" },
+          { id: "qasm", label: "QASM" },
+        ]}
+      />
+    </section>
+  );
+}

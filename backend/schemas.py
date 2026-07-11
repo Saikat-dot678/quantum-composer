@@ -244,8 +244,10 @@ class CircuitAnalysisResponse(BaseModel):
     non_clifford_reasons: list[str]
     t_count: int
     rotation_count: int
+    estimated_statevector_memory_bytes: Optional[float]
     estimated_statevector_memory_mb: Optional[float]
     estimated_statevector_memory_human: str
+    estimated_density_matrix_memory_bytes: Optional[float]
     estimated_density_matrix_memory_mb: Optional[float]
     estimated_density_matrix_memory_human: str
     statevector_risk: str

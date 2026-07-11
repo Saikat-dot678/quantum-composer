@@ -103,19 +103,21 @@ cd backend
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
-python -m pip install -r requirements.txt
+
+python -m pip install -r requirements.txt        # runtime only
+python -m pip install -r requirements-dev.txt     # + test tooling (pytest, httpx)
 uvicorn main:app --reload
 ```
 
 The API is at `http://localhost:8000`, with interactive docs at `/docs`. Run
 tests with `pytest -q`.
 
-**Optional:** install `stim` to enable the very fast, large-scale Clifford
-engine. Without it, `GET /engines` reports `stim_stabilizer` as unavailable and
-`auto` falls back to Aer's `stabilizer` method — nothing crashes.
+**Optional Stim engine** — the very fast, large-scale Clifford simulator. Without
+it, `GET /engines` reports `stim_stabilizer` as unavailable and `auto` falls back
+to Aer's `stabilizer` method; nothing crashes and every test still passes.
 
 ```bash
-pip install stim
+pip install -r requirements-stim.txt
 ```
 
 ## Run the frontend
@@ -123,14 +125,39 @@ pip install stim
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev      # dev server
+npm run build    # production build (also type-checks)
+npm run lint     # eslint
 ```
 
 Open `http://localhost:3000`. Copy `.env.example` to `.env.local` only if the
 API is not at `http://localhost:8000`.
 
 Use the header tabs to switch between **Composer**, **Simulator Lab**, and
-**Cryptography Lab**.
+**Cryptography Lab**. The UI is a dark "lab instrument" interface: cyan for
+quantum simulation, green for safe, amber for heavy, red for infeasible.
+
+### Frontend structure
+
+The app is componentized rather than one monolithic page:
+
+- `app/page.tsx` — thin: owns the active mode and the composer circuit.
+- `components/AppShell.tsx`, `ModeTabs.tsx` — shell + mode navigation.
+- `components/ComposerMode.tsx` — the visual composer (grid, palette, settings, code, results).
+- `components/SimulatorLab.tsx`, `CryptographyLab.tsx` — the two labs.
+- `components/ui/` — reusable primitives: `FeasibilityBadge`, `ResourceEstimateCard`,
+  `EngineReasonPanel`, `HistogramPanel`, `QBERMeter`, `BasisComparisonTable`,
+  `BitStringViewer`, `CodeBlock`, and shared badges/panels/callouts.
+- `lib/constants.ts` — **visual composer limits are separate from simulation feasibility limits.**
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push/PR:
+
+- **backend** — `pytest` on Python 3.11 and 3.12 (Stim intentionally absent, to
+  prove clean degradation).
+- **backend-stim** — the same tests with the optional Stim engine installed.
+- **frontend** — `npm ci`, `npm run lint`, `npm run build`.
 
 ## API
 
@@ -182,11 +209,37 @@ curl -s localhost:8000/crypto/bb84/simulate -H 'content-type: application/json' 
   -d '{"num_bits": 256, "eve_enabled": true, "channel_error_rate": 0.02, "seed": 123}'
 ```
 
+## Smoke tests / acceptance
+
+With the backend on `:8000` and the frontend on `:3000`:
+
+1. **Bell circuit** — Composer → *Bell state* preset → **Run circuit** → ~50/50 over `00`/`11`.
+2. **> 8-qubit composer** — set Qubits to 12 in Circuit settings (a helper note
+   appears). **Run circuit** routes to `/circuit/simulate-v2`; the result panel
+   shows the auto-selected engine. The old V1 `/circuit/simulate` is *never* sent
+   a > 8-qubit circuit.
+3. **Circuit analyzer** — Simulator Lab → load a preset → **Analyze circuit** →
+   memory estimates, Clifford classification, feasibility badge.
+4. **simulate-v2** — Simulator Lab → **Run simulation**. Try *1000-qubit Clifford*
+   (routes to stabilizer/Stim) and *Arbitrary 100-qubit non-Clifford* (rejected
+   with an explanation).
+5. **BB84** — Cryptography Lab → BB84 → run with Eve **off** (low QBER, secure)
+   then **on** (QBER ≈ 25%, detected).
+6. **QRNG** — Cryptography Lab → QRNG → run → ~50/50 bit distribution.
+7. **Optional Stim** — `GET /engines` shows `stim_stabilizer` available only if
+   `stim` is installed; the UI and router behave correctly either way.
+
+Backend equivalents run headless via `pytest -q` (34 tests). CI runs all of the
+above build/lint/test checks automatically.
+
 ## Limits and current scope
 
-- The **composer** grid is capped at 8 qubits; the **Simulator Lab** accepts
-  larger structured circuits (up to 4096 qubits in the schema), gated by the
-  resource estimator and per-engine hard caps.
+- **Visual composer limits are separate from simulation feasibility limits.** The
+  composer draws up to 64 qubits; the old exact V1 `/circuit/simulate` path stays
+  small and safe (≤ 8 qubits), and larger composer circuits are routed to the
+  multi-engine `/circuit/simulate-v2` router (or you open the Simulator Lab).
+- The Simulator Lab accepts larger structured circuits (up to 4096 qubits in the
+  schema), gated by the resource estimator and per-engine hard caps.
 - Exact statevector is hard-capped at 30 qubits; density matrix at 15 qubits.
 - MPS results may be **approximate** for entangled circuits; enable "allow
   approximation".

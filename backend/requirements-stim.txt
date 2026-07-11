@@ -1,0 +1,7 @@
+# Optional dependency: enables the `stim_stabilizer` engine for very large
+# Clifford/stabilizer circuits (hundreds of thousands of qubits).
+#
+# The backend runs fine WITHOUT this: `GET /engines` reports stim_stabilizer as
+# unavailable and the auto router falls back to Aer's `stabilizer` method.
+#   pip install -r requirements-stim.txt
+stim>=1.13,<2.0

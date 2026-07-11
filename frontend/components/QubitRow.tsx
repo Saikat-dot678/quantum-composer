@@ -1,4 +1,41 @@
 import type { CircuitOperation, GateName } from "@/lib/types";
 import { GateCell } from "./GateCell";
-interface Props { qubit: number; columns: number; operations: CircuitOperation[]; selectedGate: GateName; pending?: { qubit: number; moment: number } | null; onCellClick: (qubit: number, moment: number) => void }
-export function QubitRow({ qubit, columns, operations, selectedGate, pending, onCellClick }: Props) { return <div className="flex items-center"><div className="sticky left-0 z-20 flex h-12 w-16 shrink-0 items-center bg-white pr-3 font-mono text-xs font-semibold text-slate-600"><span className="mr-2 text-violet-500">|0〉</span>q{qubit}</div>{Array.from({ length: columns }, (_, moment) => { const operation = operations.find((item) => item.moment === moment && item.qubits.includes(qubit)); const connector = operations.find((item) => { if (item.moment !== moment || item.qubits.length !== 2 || !["cx", "cz", "swap"].includes(item.gate)) return false; const low = Math.min(...item.qubits); const high = Math.max(...item.qubits); return qubit >= low && qubit <= high; }); return <GateCell key={moment} operation={operation} connector={connector} qubit={qubit} selectedGate={selectedGate} pending={pending?.qubit === qubit && pending.moment === moment} onClick={() => onCellClick(qubit, moment)} />; })}</div>; }
+
+interface Props {
+  qubit: number;
+  columns: number;
+  operations: CircuitOperation[];
+  selectedGate: GateName;
+  pending?: { qubit: number; moment: number } | null;
+  onCellClick: (qubit: number, moment: number) => void;
+}
+
+export function QubitRow({ qubit, columns, operations, selectedGate, pending, onCellClick }: Props) {
+  return (
+    <div className="flex items-center">
+      <div className="sticky left-0 z-20 flex h-12 w-16 shrink-0 items-center bg-lab-panel pr-3 font-mono text-xs font-semibold text-lab-muted">
+        <span className="mr-1.5 text-accent-cyan">|0〉</span>q{qubit}
+      </div>
+      {Array.from({ length: columns }, (_, moment) => {
+        const operation = operations.find((item) => item.moment === moment && item.qubits.includes(qubit));
+        const connector = operations.find((item) => {
+          if (item.moment !== moment || item.qubits.length !== 2 || !["cx", "cz", "swap"].includes(item.gate)) return false;
+          const low = Math.min(...item.qubits);
+          const high = Math.max(...item.qubits);
+          return qubit >= low && qubit <= high;
+        });
+        return (
+          <GateCell
+            key={moment}
+            operation={operation}
+            connector={connector}
+            qubit={qubit}
+            selectedGate={selectedGate}
+            pending={pending?.qubit === qubit && pending.moment === moment}
+            onClick={() => onCellClick(qubit, moment)}
+          />
+        );
+      })}
+    </div>
+  );
+}
