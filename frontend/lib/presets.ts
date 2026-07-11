@@ -1,0 +1,12 @@
+import type { CircuitOperation, Preset } from "./types";
+const op = (gate: CircuitOperation["gate"], qubits: number[], moment: number, clbits: number[] = [], params: Record<string, number> = {}): CircuitOperation => ({ gate, qubits, clbits, params, moment });
+const measures = (count: number, moment: number) => Array.from({ length: count }, (_, i) => op("measure", [i], moment, [i]));
+export const PRESETS: Preset[] = [
+  { id: "superposition", name: "Superposition", description: "One qubit in an equal |0〉/|1〉 superposition.", circuit: { num_qubits: 1, num_clbits: 1, shots: 1024, operations: [op("h", [0], 0), ...measures(1, 1)] } },
+  { id: "bell", name: "Bell state", description: "Entangle two qubits; expect approximately 00 and 11.", circuit: { num_qubits: 2, num_clbits: 2, shots: 1024, operations: [op("h", [0], 0), op("cx", [0, 1], 1), ...measures(2, 2)] } },
+  { id: "ghz", name: "GHZ state", description: "Create three-qubit GHZ entanglement.", circuit: { num_qubits: 3, num_clbits: 3, shots: 1024, operations: [op("h", [0], 0), op("cx", [0, 1], 1), op("cx", [1, 2], 2), ...measures(3, 3)] } },
+  { id: "teleportation", name: "Teleportation skeleton", description: "Bell pair and Bell-basis measurements; corrections are future work.", circuit: { num_qubits: 3, num_clbits: 3, shots: 1024, operations: [op("h", [1], 0), op("cx", [1, 2], 1), op("cx", [0, 1], 2), op("h", [0], 3), op("measure", [0], 4, [0]), op("measure", [1], 4, [1]), op("measure", [2], 5, [2])] } },
+  { id: "deutsch-jozsa", name: "Deutsch–Jozsa", description: "A two-qubit balanced-oracle teaching example.", circuit: { num_qubits: 2, num_clbits: 2, shots: 1024, operations: [op("x", [1], 0), op("h", [0], 1), op("h", [1], 1), op("cx", [0, 1], 2), op("h", [0], 3), ...measures(2, 4)] } },
+  { id: "grover", name: "Grover · 2 qubits", description: "Mark |11〉 and amplify it with one Grover iteration.", circuit: { num_qubits: 2, num_clbits: 2, shots: 1024, operations: [op("h", [0], 0), op("h", [1], 0), op("cz", [0, 1], 1), op("h", [0], 2), op("h", [1], 2), op("x", [0], 3), op("x", [1], 3), op("cz", [0, 1], 4), op("x", [0], 5), op("x", [1], 5), op("h", [0], 6), op("h", [1], 6), ...measures(2, 7)] } },
+  { id: "bb84", name: "BB84 encode/decode", description: "Encode 0 in Z and 1 in X, then decode in matching bases.", circuit: { num_qubits: 2, num_clbits: 2, shots: 1024, operations: [op("x", [1], 0), op("h", [1], 1), op("barrier", [0, 1], 2), op("h", [1], 3), ...measures(2, 4)] } },
+];
