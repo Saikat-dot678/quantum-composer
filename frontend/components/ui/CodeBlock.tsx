@@ -1,4 +1,5 @@
 "use client";
+
 import { CopyButton } from "./primitives";
 
 interface Props {
@@ -10,32 +11,36 @@ interface Props {
   onTab?: (id: string) => void;
 }
 
-// Polished, scrollable, copyable code panel for JSON / Qiskit / QASM / diagrams.
 export function CodeBlock({ content, label, maxHeight = "max-h-[380px]", tabs, activeTab, onTab }: Props) {
+  const panelId = tabs ? `code-panel-${activeTab ?? "output"}` : undefined;
   return (
     <div className="overflow-hidden rounded-xl border border-lab-border bg-lab-surface">
-      <div className="flex items-center justify-between border-b border-lab-border bg-lab-raised/50 px-3 py-2">
+      <div className="flex items-center justify-between gap-3 border-b border-lab-border bg-lab-raised/50 px-3 py-2">
         {tabs ? (
-          <div className="flex gap-1">
-            {tabs.map((t) => (
+          <div role="tablist" aria-label="Generated output format" className="flex min-w-0 gap-1 overflow-x-auto">
+            {tabs.map((tab) => (
               <button
-                key={t.id}
+                key={tab.id}
                 type="button"
-                onClick={() => onTab?.(t.id)}
-                className={`rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide transition ${
-                  activeTab === t.id ? "bg-lab-panel text-accent-cyan" : "text-lab-faint hover:text-lab-muted"
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                aria-controls={`code-panel-${tab.id}`}
+                tabIndex={activeTab === tab.id ? 0 : -1}
+                onClick={() => onTab?.(tab.id)}
+                className={`whitespace-nowrap rounded-md px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide transition ${
+                  activeTab === tab.id ? "bg-lab-panel text-accent-cyan" : "text-lab-faint hover:text-lab-muted"
                 }`}
               >
-                {t.label}
+                {tab.label}
               </button>
             ))}
           </div>
         ) : (
-          <span className="text-[10px] font-semibold uppercase tracking-[.16em] text-lab-faint">{label}</span>
+          <span className="instrument-label">{label}</span>
         )}
         <CopyButton text={content} />
       </div>
-      <pre className={`overflow-auto ${maxHeight} p-3 font-mono text-[11px] leading-5 text-slate-300`}>{content}</pre>
+      <pre id={panelId} role={tabs ? "tabpanel" : undefined} tabIndex={0} className={`overflow-auto ${maxHeight} p-4 font-mono text-xs leading-5 text-slate-300`}>{content}</pre>
     </div>
   );
 }

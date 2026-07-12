@@ -21,9 +21,9 @@ const FEASIBILITY_LABEL: Record<string, string> = {
   approximation_or_hardware: "Approximation or hardware needed",
 };
 
-export function RiskBadge({ risk, prefix }: { risk: string; prefix?: string }) {
+export function RiskBadge({ risk, prefix, subject = "Memory" }: { risk: string; prefix?: string; subject?: string }) {
   return (
-    <Badge tone={RISK_TONE[risk] ?? "neutral"} title={`Statevector memory risk: ${risk}`}>
+    <Badge tone={RISK_TONE[risk] ?? "neutral"} title={`${subject} risk: ${risk}`}>
       {prefix ? `${prefix}: ` : ""}
       {risk}
     </Badge>

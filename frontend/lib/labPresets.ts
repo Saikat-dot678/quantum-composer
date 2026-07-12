@@ -4,7 +4,7 @@
 // to show, honestly, what scales (Clifford/stabilizer, low-entanglement/MPS) and
 // what does not (arbitrary large non-Clifford statevector).
 import type { CircuitData, CircuitOperation, GateName } from "./types";
-import type { LabPreset } from "./labTypes";
+import type { LabPreset, LargeCircuitFamily } from "./labTypes";
 
 const op = (
   gate: GateName,
@@ -111,65 +111,141 @@ const circuit = (num_qubits: number, operations: CircuitOperation[], shots = 256
   operations,
 });
 
+// Lazily generate and cache each preset circuit: nothing is materialized at
+// module load, and re-selecting a preset reuses the first build.
+function cached(build: () => CircuitData): () => CircuitData {
+  let value: CircuitData | null = null;
+  return () => {
+    if (!value) value = build();
+    return value;
+  };
+}
+
+interface PresetSpec {
+  id: string;
+  name: string;
+  description: string;
+  teaches: string;
+  family: LargeCircuitFamily;
+  numQubits: number;
+  depth?: number;
+  operationsEstimate: number;
+  suggestedEngine: LabPreset["suggestedEngine"];
+  allowApproximation?: boolean;
+  expectRejection?: boolean;
+  generate: () => CircuitData;
+}
+
+function makePreset(spec: PresetSpec): LabPreset {
+  return {
+    id: spec.id,
+    name: spec.name,
+    description: spec.description,
+    teaches: spec.teaches,
+    descriptor: {
+      id: spec.id,
+      name: spec.name,
+      family: spec.family,
+      numQubits: spec.numQubits,
+      depth: spec.depth,
+      operationsEstimate: spec.operationsEstimate,
+      recommendedEngine: spec.suggestedEngine,
+      explanation: spec.teaches,
+    },
+    build: cached(spec.generate),
+    suggestedEngine: spec.suggestedEngine,
+    allowApproximation: spec.allowApproximation,
+    expectRejection: spec.expectRejection,
+  };
+}
+
 export const LAB_PRESETS: LabPreset[] = [
-  {
+  makePreset({
     id: "sv-small",
     name: "Small exact circuit (5q)",
     description: "A tiny arbitrary circuit with H, T, RX, CX, CZ.",
     teaches: "Exact statevector simulation is fine for a handful of qubits.",
-    circuit: circuit(5, smallExact(7)),
+    family: "small_universal",
+    numQubits: 5,
+    depth: 6,
+    operationsEstimate: 10,
     suggestedEngine: "auto",
-  },
-  {
+    generate: () => circuit(5, smallExact(7)),
+  }),
+  makePreset({
     id: "ghz-100-mps",
     name: "100-qubit GHZ (MPS)",
     description: "A 100-qubit GHZ chain: maximally correlated but low bond dimension.",
     teaches: "GHZ has bond dimension 2, so MPS simulates 100 qubits easily; exact statevector would need ~2e16 PB.",
-    circuit: circuit(100, ghzChain(100)),
+    family: "ghz",
+    numQubits: 100,
+    depth: 100,
+    operationsEstimate: 100,
     suggestedEngine: "aer_mps",
     allowApproximation: true,
-  },
-  {
+    generate: () => circuit(100, ghzChain(100)),
+  }),
+  makePreset({
     id: "clifford-1000",
     name: "1000-qubit Clifford (stabilizer)",
     description: "A random 1000-qubit Clifford circuit (H, S, CX, CZ).",
     teaches: "Clifford circuits obey Gottesman-Knill: stabilizer simulation scales polynomially to 1000+ qubits.",
-    circuit: circuit(1000, randomClifford(1000, 4, 11)),
+    family: "clifford_random",
+    numQubits: 1000,
+    depth: 8,
+    operationsEstimate: 5400,
     suggestedEngine: "auto",
-  },
-  {
+    generate: () => circuit(1000, randomClifford(1000, 4, 11)),
+  }),
+  makePreset({
     id: "random-clifford-200",
     name: "Random Clifford (200q)",
     description: "A deeper random Clifford circuit on 200 qubits.",
     teaches: "Even deep Clifford circuits stay tractable via the stabilizer formalism.",
-    circuit: circuit(200, randomClifford(200, 10, 23)),
+    family: "clifford_random",
+    numQubits: 200,
+    depth: 20,
+    operationsEstimate: 2700,
     suggestedEngine: "auto",
-  },
-  {
+    generate: () => circuit(200, randomClifford(200, 10, 23)),
+  }),
+  makePreset({
     id: "low-ent-chain",
     name: "Low-entanglement chain (48q)",
     description: "Small rotations + shallow nearest-neighbour coupling on 48 qubits.",
     teaches: "Low-entanglement non-Clifford circuits are infeasible for exact statevector but cheap for MPS.",
-    circuit: circuit(48, lowEntanglementChain(48)),
+    family: "low_entanglement_chain",
+    numQubits: 48,
+    depth: 3,
+    operationsEstimate: 95,
     suggestedEngine: "aer_mps",
     allowApproximation: true,
-  },
-  {
+    generate: () => circuit(48, lowEntanglementChain(48)),
+  }),
+  makePreset({
     id: "high-ent-fail",
     name: "High-entanglement random (32q) — why this fails",
     description: "Wide, deep, non-Clifford, highly entangled circuit.",
     teaches: "No exploitable structure: exact needs ~64 GB+, MPS bond dimension explodes. Honestly rejected.",
-    circuit: circuit(32, highEntanglementNonClifford(32, 31)),
+    family: "high_entanglement_rejection_demo",
+    numQubits: 32,
+    depth: 13,
+    operationsEstimate: 560,
     suggestedEngine: "auto",
     expectRejection: true,
-  },
-  {
+    generate: () => circuit(32, highEntanglementNonClifford(32, 31)),
+  }),
+  makePreset({
     id: "arbitrary-100-reject",
     name: "Arbitrary 100-qubit non-Clifford — rejection demo",
     description: "100 qubits with T gates and rotations sprinkled throughout.",
     teaches: "Arbitrary 100-qubit statevector simulation needs ~2e16 PB. This is the myth this project refuses to fake.",
-    circuit: circuit(100, arbitraryNonClifford(100, 41)),
+    family: "non_clifford_rejection_demo",
+    numQubits: 100,
+    depth: 9,
+    operationsEstimate: 290,
     suggestedEngine: "auto",
     expectRejection: true,
-  },
+    generate: () => circuit(100, arbitraryNonClifford(100, 41)),
+  }),
 ];

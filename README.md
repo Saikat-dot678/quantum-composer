@@ -13,10 +13,21 @@ honest about the hard limits of classical simulation.
 ## Features
 
 ### Composer
-- Visual grid for 1–8 qubits with X, Y, Z, H, S, T, RX/RY/RZ, CX, CZ, SWAP,
-  Measure, and Barrier.
+- Scrollable visual grid for interactive circuits up to 128 qubits with X, Y, Z,
+  H, S, T, RX/RY/RZ, CX, CZ, SWAP, Measure, and Barrier. Rendering uses a
+  two-stage cell-count guard (warn, then pause) so an oversized grid does not
+  lock the browser; larger structured circuits are generated from compact
+  descriptors and handled in Simulator Lab instead of being hand-drawn.
 - Circuit JSON, generated Qiskit code, OpenQASM 2, counts histogram, depth, gate
-  counts, and text diagram.
+  counts, and text diagram. The V1 code/QASM/exact path remains limited to
+  8 qubits, 8 classical bits, 200 operations, and 8,192 shots; circuits outside
+  that envelope use the V2 simulator path and retain JSON output.
+- **Live instruments:** the status rail shows the active circuit's qubits,
+  Clifford class, route, and instant exact-memory estimate as you edit; for
+  circuits up to 5 qubits the composer renders a local ideal-state preview
+  (basis probabilities, phases, and a 1-qubit Bloch projection) — above that it
+  explains the exponential wall instead. The circuit grid supports roving
+  arrow-key navigation with a single tab stop.
 - Presets: superposition, Bell, GHZ, teleportation skeleton, Deutsch–Jozsa,
   Grover, BB84.
 
@@ -32,8 +43,9 @@ honest about the hard limits of classical simulation.
   non-Clifford is rejected with an explanation).
 
 ### Cryptography Lab
-- Protocol-level, seeded-reproducible simulators: **BB84**, **E91** (with a CHSH
-  indicator), **B92**, and a **QRNG**.
+- Protocol-level, optionally seeded simulators: **BB84**, **E91** (with a CHSH
+  indicator), **B92**, and a **QRNG**. Reusing an explicit seed reproduces a
+  run; an omitted seed does not.
 - QBER reporting, Eve intercept-resend, and Toeplitz-hash privacy amplification.
 
 ## Can this simulate 100 qubits?
@@ -42,7 +54,9 @@ Short answer: **it depends entirely on the circuit.**
 
 - ✅ **Yes, for some structured circuits.** Clifford/stabilizer circuits (via
   Stim or Aer's `stabilizer` method) and low-entanglement circuits (via MPS)
-  can reach 100, 1000, or more qubits.
+  can reach 100, 1000, or more qubits in suitable environments. This API
+  currently accepts at most 4096 qubits, and practical runtime still depends on
+  circuit depth, entanglement, operations, shots, and host resources.
 - ❌ **No, not for arbitrary universal circuits.** A full statevector stores
   `2**n` complex amplitudes = `16 * 2**n` bytes. That is ~16 GB at 30 qubits,
   ~16 PB at 50 qubits, and roughly `2 × 10¹⁶` PB at 100 qubits — physically
@@ -54,8 +68,11 @@ Short answer: **it depends entirely on the circuit.**
   samples** back, not the full statevector. "IBM runs 100 qubits" and "a laptop
   simulates 100 qubits" are fundamentally different claims.
 
-When a circuit is genuinely infeasible, Quantum Composer **rejects it with an
-explanation** rather than freezing or crashing. See
+When the configured estimator and engine guardrails classify a circuit as
+infeasible, Quantum Composer **rejects it with an explanation** before launching
+that engine. These checks reduce risk; they are not an operating-system resource
+sandbox, so production deployments still need memory, CPU, concurrency, and
+wall-clock limits. See
 [docs/SIMULATION_ENGINES.md](docs/SIMULATION_ENGINES.md) for the full story.
 
 ### What this project does and does not claim
@@ -89,8 +106,8 @@ FastAPI + Pydantic (strict validation, no user Python)
 The monorepo contains `frontend/` (Next.js/TypeScript/Tailwind), `backend/`
 (FastAPI/Qiskit), and `docs/`. See [Architecture](docs/ARCHITECTURE.md),
 [Simulation Engines](docs/SIMULATION_ENGINES.md),
-[Cryptography Lab](docs/CRYPTOGRAPHY_LAB.md), and
-[Beast Mode Roadmap](docs/BEAST_MODE_ROADMAP.md).
+[Cryptography Lab](docs/CRYPTOGRAPHY_LAB.md), and the
+[Advanced Development Roadmap](docs/BEAST_MODE_ROADMAP.md).
 
 ## Prerequisites
 
@@ -101,23 +118,28 @@ Python 3.11/3.12 and Node.js 20+ are recommended.
 ```bash
 cd backend
 python -m venv .venv
-# Windows: .venv\Scripts\activate
+# Windows PowerShell: .\.venv\Scripts\Activate.ps1
+# Windows cmd.exe: .venv\Scripts\activate.bat
 # macOS/Linux: source .venv/bin/activate
 
-python -m pip install -r requirements.txt        # runtime only
-python -m pip install -r requirements-dev.txt     # + test tooling (pytest, httpx)
-uvicorn main:app --reload
+# Choose one dependency set:
+python -m pip install -r requirements.txt      # runtime only
+# python -m pip install -r requirements-dev.txt  # runtime + pytest/httpx
+
+python -m uvicorn main:app --reload
 ```
 
-The API is at `http://localhost:8000`, with interactive docs at `/docs`. Run
-tests with `pytest -q`.
+The API is at `http://localhost:8000`, with interactive docs at `/docs`. If the
+development requirements are installed, run tests from `backend/` with
+`python -m pytest -q`.
 
 **Optional Stim engine** — the very fast, large-scale Clifford simulator. Without
 it, `GET /engines` reports `stim_stabilizer` as unavailable and `auto` falls back
-to Aer's `stabilizer` method; nothing crashes and every test still passes.
+to Aer's `stabilizer` method. Engine discovery handles the missing dependency,
+and the test suite covers this fallback.
 
 ```bash
-pip install -r requirements-stim.txt
+python -m pip install -r requirements-stim.txt
 ```
 
 ## Run the frontend
@@ -126,38 +148,71 @@ pip install -r requirements-stim.txt
 cd frontend
 npm install
 npm run dev      # dev server
-npm run build    # production build (also type-checks)
 npm run lint     # eslint
+npm run typecheck
+npm run build    # production build
+npm run test:e2e # Playwright smoke suite (first: npx playwright install chromium)
 ```
+
+The Playwright smoke suite starts its own production server on port 3130 and
+does **not** require the backend: it asserts the shell identity, live
+telemetry, mode navigation, roving grid keyboard navigation, and the local
+state preview.
 
 Open `http://localhost:3000`. Copy `.env.example` to `.env.local` only if the
 API is not at `http://localhost:8000`.
 
 Use the header tabs to switch between **Composer**, **Simulator Lab**, and
-**Cryptography Lab**. The UI is a dark "lab instrument" interface: cyan for
-quantum simulation, green for safe, amber for heavy, red for infeasible.
+**Cryptography Lab**. The UI is a dark "quantum control room" interface: cyan
+for quantum simulation, green for safe, amber for heavy, red for infeasible,
+with a faint qubit-wire background texture and a self-hosted type system
+(Chakra Petch for instrument labels and headings, Archivo for UI text,
+JetBrains Mono for bitstrings, counts, and code — latin subsets committed under
+`frontend/app/fonts/`, so builds need no font network access).
+
+### Interface captures
+
+The redesigned Composer, Simulator Lab, and Cryptography Lab were visually
+checked at desktop and narrow-screen widths during implementation. Maintained
+image assets are not committed yet; add current captures here when the project
+adopts a screenshot-update workflow rather than presenting stale UI images.
 
 ### Frontend structure
 
-The app is componentized rather than one monolithic page:
+The redesign keeps the app entry point thin and organizes components by feature
+boundary rather than one monolithic page. The exact filenames may evolve, but
+the intended ownership is stable:
 
-- `app/page.tsx` — thin: owns the active mode and the composer circuit.
-- `components/AppShell.tsx`, `ModeTabs.tsx` — shell + mode navigation.
-- `components/ComposerMode.tsx` — the visual composer (grid, palette, settings, code, results).
-- `components/SimulatorLab.tsx`, `CryptographyLab.tsx` — the two labs.
-- `components/ui/` — reusable primitives: `FeasibilityBadge`, `ResourceEstimateCard`,
-  `EngineReasonPanel`, `HistogramPanel`, `QBERMeter`, `BasisComparisonTable`,
-  `BitStringViewer`, `CodeBlock`, and shared badges/panels/callouts.
-- `lib/constants.ts` — **visual composer limits are separate from simulation feasibility limits.**
+- `components/shell/` — application frame, mode navigation, backend/current-mode
+  status, and the persistent honesty note;
+- `components/composer/` — toolbar, palette, grid/rows/cells, settings, presets,
+  and composer orchestration;
+- `components/simulator/` — sources, engine/options controls, feasibility and
+  resource analysis, results, and engine availability;
+- `components/crypto/` — shared protocol navigation plus BB84, E91, B92, and
+  QRNG workflows;
+- `components/output/` — generated code, measurement results, and histograms;
+- `components/ui/` — lightweight repository-owned form, feedback, display, and
+  accessibility primitives;
+- `lib/` — V1/V2 API clients, shared transport/error handling, typed contracts,
+  presets, limits, routing rules, and formatting helpers.
+
+Visual composer limits remain separate from simulation feasibility limits.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every push/PR:
+`.github/workflows/ci.yml` runs on pushes to `main` and pull requests targeting
+`main`:
 
 - **backend** — `pytest` on Python 3.11 and 3.12 (Stim intentionally absent, to
   prove clean degradation).
 - **backend-stim** — the same tests with the optional Stim engine installed.
-- **frontend** — `npm ci`, `npm run lint`, `npm run build`.
+- **frontend** — `npm ci`, `npm run lint`, `npm run typecheck`,
+  `npm run build`.
+
+The workflow does not currently run browser-level UI, accessibility, or
+end-to-end tests. The smoke scenarios below are manual until that coverage is
+added.
 
 ## API
 
@@ -179,9 +234,24 @@ The app is componentized rather than one monolithic page:
 - `POST /crypto/b92/simulate`
 - `POST /crypto/qrng/simulate`
 
+### Request boundaries and errors
+
+| API path | Request boundary | Intended use |
+| --- | --- | --- |
+| V1 `/circuit/*` | 1–8 qubits, 0–8 classical bits, 1–8192 shots, at most 200 operations | Validation, code/QASM export, and small exact simulation |
+| V2 `/circuit/analyze` | 1–4096 qubits, 0–4096 classical bits, 1–1,000,000 shots, at most 200,000 operations | Structural analysis and a resource estimate against a fixed 1024 MB reference budget |
+| V2 `/circuit/simulate-v2` | Same advanced circuit container; options allow a declared 16–65,536 MB budget | Engine-routed execution; structure and actual resources still determine feasibility |
+
+Invalid or infeasible requests normally return HTTP `422`; a requested engine
+or quantum dependency that is unavailable returns `503`. The limits above are
+validation ceilings, not performance promises. In particular, the analyzer's
+1024 MB reference estimate and the simulator's caller-declared
+`max_memory_mb` can produce different risk labels.
+
 ### Example: analyze then simulate
 
 ```bash
+# POSIX shell examples
 # Analyze a Bell circuit
 curl -s localhost:8000/circuit/analyze -H 'content-type: application/json' -d '{
   "num_qubits": 2, "num_clbits": 0, "shots": 1024,
@@ -202,7 +272,7 @@ curl -s localhost:8000/circuit/simulate-v2 -H 'content-type: application/json' -
 }'
 ```
 
-### Example: BB84 with and without an eavesdropper
+### Example: BB84 with an eavesdropper
 
 ```bash
 curl -s localhost:8000/crypto/bb84/simulate -H 'content-type: application/json' \
@@ -223,30 +293,41 @@ With the backend on `:8000` and the frontend on `:3000`:
 4. **simulate-v2** — Simulator Lab → **Run simulation**. Try *1000-qubit Clifford*
    (routes to stabilizer/Stim) and *Arbitrary 100-qubit non-Clifford* (rejected
    with an explanation).
-5. **BB84** — Cryptography Lab → BB84 → run with Eve **off** (low QBER, secure)
-   then **on** (QBER ≈ 25%, detected).
+5. **BB84** — Cryptography Lab → BB84 → run with Eve **off** (QBER typically
+   below this model's threshold) then **on** (intercept-resend usually raises
+   QBER toward 25%; treat it as a disturbance alarm, not proof of Eve).
 6. **QRNG** — Cryptography Lab → QRNG → run → ~50/50 bit distribution.
 7. **Optional Stim** — `GET /engines` shows `stim_stabilizer` available only if
    `stim` is installed; the UI and router behave correctly either way.
 
-Backend equivalents run headless via `pytest -q` (34 tests). CI runs all of the
-above build/lint/test checks automatically.
+Backend contract equivalents run headless via `python -m pytest -q` (34 tests in
+the current suite). CI runs backend tests plus frontend lint/typecheck/build
+checks; it does not automate the browser interactions listed above.
 
 ## Limits and current scope
 
 - **Visual composer limits are separate from simulation feasibility limits.** The
-  composer draws up to 64 qubits; the old exact V1 `/circuit/simulate` path stays
-  small and safe (≤ 8 qubits), and larger composer circuits are routed to the
-  multi-engine `/circuit/simulate-v2` router (or you open the Simulator Lab).
+  interactive grid draws up to 128 qubits (`LIMITS.composer` in
+  `frontend/lib/constants.ts`); the guarded V1 `/circuit/simulate` path keeps
+  its full small-request envelope, and circuits exceeding any V1 limit are routed
+  to `/circuit/simulate-v2` (or opened in Simulator Lab). Circuits wider than the
+  interactive grid exist only as generated descriptors — the 100-qubit GHZ and
+  1000-qubit Clifford teaching presets are built on demand and never rendered as
+  DOM rows.
 - The Simulator Lab accepts larger structured circuits (up to 4096 qubits in the
-  schema), gated by the resource estimator and per-engine hard caps.
+  schema), gated by the resource estimator and per-engine hard caps. The 4096
+  value is a request-schema ceiling, not a claim that every such circuit runs.
 - Exact statevector is hard-capped at 30 qubits; density matrix at 15 qubits.
-- MPS results may be **approximate** for entangled circuits; enable "allow
-  approximation".
-- Cryptography simulators are **protocol-level** and reproducible via `seed`;
-  the QRNG is educational, not a certified hardware generator.
+- MPS can be exact while its retained bond dimension is sufficient; configured
+  truncation or bond limits make it approximate. “Allow approximation” permits
+  the auto router to try MPS when exact simulation is infeasible.
+- Cryptography simulators are **protocol-level**. Runs are reproducible when the
+  same explicit `seed` is supplied; the QRNG is educational, not a certified
+  hardware generator.
 - No dynamic conditions, custom gates, statevector/Bloch viewers, or real
   hardware execution yet — see the [roadmap](docs/BEAST_MODE_ROADMAP.md).
+- Estimator budgets and qubit caps reduce accidental resource use but do not
+  replace process/container memory limits, concurrency control, or timeouts.
 
 No IBM credentials are requested or stored. `backend/hardware.py` is an interface
 boundary only. IBM Quantum Composer inspired the educational interaction model;

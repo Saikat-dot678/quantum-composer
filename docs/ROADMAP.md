@@ -2,11 +2,13 @@
 
 Quantum Composer is an educational quantum circuit composer, multi-engine
 simulator, and quantum cryptography lab. This roadmap tracks direction — see
-[BEAST_MODE_ROADMAP.md](BEAST_MODE_ROADMAP.md) for the detailed phase list.
+the [Advanced Development Roadmap](BEAST_MODE_ROADMAP.md) for the detailed phase
+list. The filename is retained to avoid breaking existing links.
 
 ## Done (V2)
 
-- Multi-engine simulation router (`auto`) with honest feasibility rejection.
+- Multi-engine simulation router (`auto`) with estimator-based feasibility
+  rejection and explicit reasons.
 - Engines: Aer statevector / MPS / stabilizer / density-matrix, optional Stim.
 - Circuit analyzer + log-space resource estimator (safe/heavy/dangerous/infeasible).
 - Cryptography lab: BB84, E91, B92, QRNG with QBER, Eve, CHSH, privacy amplification.

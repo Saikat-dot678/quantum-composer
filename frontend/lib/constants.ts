@@ -1,26 +1,74 @@
-// Central limits and thresholds. The key idea: **visual drawing limits are
-// separate from simulation feasibility limits.** The composer can draw larger
-// circuits than the old safe V1 statevector path can simulate; the Simulator Lab
-// and the backend resource estimator decide what is actually feasible.
+// Central limit model. The core design rule: there is no single "max qubits".
+// Different concerns have different ceilings, and they must never be conflated:
+//
+// - `composer.*`      — how much the *interactive visual grid* will draw. A DOM
+//                       rendering concern only; says nothing about simulability.
+// - `largeCircuit.*`  — how large a *generated/structured descriptor* may be.
+//                       Matches the backend V2 request-validation ceilings; a
+//                       schema bound, not a feasibility promise.
+// - `simulation.*`    — the guarded V1 exact envelope and the backend's hard
+//                       per-engine caps. Actual feasibility is decided per
+//                       circuit by the backend resource estimator and router.
+// - `crypto.*`        — protocol-level simulator input bounds (backend schema).
+// - `shots.*`         — sampling bounds for the two simulation paths.
+//
+// Backend sources of truth: backend/schemas.py (request ceilings),
+// backend/engines/aer_statevector.py and aer_density.py (hard qubit caps).
 
-// How large a circuit the visual composer will draw.
-export const COMPOSER_MIN_QUBITS = 1;
-export const COMPOSER_MAX_QUBITS = 64;
-export const COMPOSER_MAX_CLBITS = 64;
-export const COMPOSER_MIN_COLUMNS = 4;
-export const COMPOSER_MAX_COLUMNS = 200;
+export const LIMITS = {
+  composer: {
+    minQubits: 1,
+    /** Interactive visual editing bound. Above this, use generated presets + Simulator Lab. */
+    interactiveMaxQubits: 128,
+    interactiveMaxClbits: 128,
+    minColumns: 4,
+    interactiveMaxColumns: 256,
+    /** Rendered cells (quantum + classical rows × columns) above which the grid warns about responsiveness. */
+    softCellLimit: 4096,
+    /** Rendered cells above which the grid refuses to draw and directs to Simulator Lab. */
+    hardCellLimit: 16384,
+  },
+  largeCircuit: {
+    /** Backend V2 `AdvancedCircuitRequest` qubit ceiling (schema bound, not a feasibility promise). */
+    maxDescriptorQubits: 4096,
+    /** Backend V2 operation-count ceiling. */
+    maxDescriptorOperations: 200_000,
+    /** Circuits at or below this width can still be drawn interactively if desired. */
+    recommendedVisualQubits: 128,
+  },
+  simulation: {
+    /** The old V1 exact path stays intentionally small and safe. */
+    safeV1MaxQubits: 8,
+    safeV1MaxClbits: 8,
+    safeV1MaxOperations: 200,
+    safeV1MaxShots: 8192,
+    /** Backend hard caps for exact engines, independent of the memory budget. */
+    statevectorHardCapQubits: 30,
+    densityMatrixHardCapQubits: 15,
+    /** V2 run-budget bounds (MB) accepted by simulate-v2. */
+    minMemoryBudgetMb: 16,
+    maxMemoryBudgetMb: 65_536,
+    defaultMemoryBudgetMb: 1024,
+  },
+  crypto: {
+    /** BB84 / E91 / B92 backend input ceilings. */
+    maxKeyProtocolBits: 4096,
+    /** QRNG backend input ceiling. */
+    maxQrngBits: 8192,
+    defaultProtocolBits: 128,
+  },
+  shots: {
+    min: 1,
+    /** V1 exact path ceiling. */
+    v1Max: 8192,
+    /** V2 router ceiling. */
+    v2Max: 1_000_000,
+    options: [128, 256, 512, 1024, 2048, 4096, 8192] as const,
+  },
+} as const;
 
-// The old V1 `/circuit/simulate` endpoint runs an exact statevector and is kept
-// deliberately small and safe. Circuits above this qubit count must go through
-// `/circuit/simulate-v2` (the honest multi-engine router) instead.
-export const SAFE_V1_SIM_MAX_QUBITS = 8;
-export const SAFE_V1_SIM_MAX_CLBITS = 8;
-
-// Beyond this many rendered cells (qubits x columns) the grid gets heavy; we
-// nudge the user toward the Simulator Lab rather than drawing a giant DOM.
-export const GRID_CELL_SOFT_LIMIT = 3200;
-
-export const SHOT_OPTIONS = [128, 256, 512, 1024, 2048, 4096, 8192] as const;
+/** Shot presets offered by the composer settings panel. */
+export const SHOT_OPTIONS = LIMITS.shots.options;
 
 // The one-line honesty statement reused across the UI.
 export const HONESTY_NOTE =

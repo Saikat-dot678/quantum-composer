@@ -9,15 +9,15 @@ export default {
         quantum: { 400: "#a78bfa", 500: "#8b5cf6", 600: "#7c3aed" },
         // Dark scientific "lab instrument" surfaces.
         lab: {
-          bg: "#080b11",
-          surface: "#0d131c",
-          panel: "#111a26",
-          raised: "#16212f",
-          border: "#1f2c3d",
-          borderStrong: "#2b3c52",
-          text: "#e2e8f0",
-          muted: "#94a3b8",
-          faint: "#64748b",
+          bg: "#070b10",
+          surface: "#0a1017",
+          panel: "#0d141d",
+          raised: "#121c27",
+          border: "#1b2937",
+          borderStrong: "#2a3c4e",
+          text: "#e6edf4",
+          muted: "#9aa9b8",
+          faint: "#6f8092",
         },
         // Semantic accents: cyan=quantum sim, green=safe, amber=heavy, red=infeasible.
         accent: {
@@ -28,11 +28,14 @@ export default {
         },
       },
       fontFamily: {
+        sans: ["var(--font-ui)", "Aptos", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["var(--font-display)", "Bahnschrift", "Aptos Display", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
       },
       boxShadow: {
-        panel: "0 1px 0 rgba(255,255,255,.02) inset, 0 8px 30px rgba(0,0,0,.35)",
-        glow: "0 0 0 1px rgba(34,211,238,.25), 0 0 24px rgba(34,211,238,.12)",
+        panel: "0 1px 0 rgba(255,255,255,.025) inset, 0 12px 36px rgba(0,0,0,.24)",
+        glow: "0 0 0 1px rgba(34,211,238,.22), 0 0 22px rgba(34,211,238,.1)",
+        signal: "0 8px 28px rgba(34,211,238,.16)",
       },
     },
   },

@@ -22,9 +22,9 @@ export function BasisComparisonTable({
 
   const Row = ({ label, render }: { label: string; render: (i: number) => ReactNode }) => (
     <div className="flex items-center gap-0.5">
-      <span className="w-16 shrink-0 text-right text-[9px] uppercase tracking-wide text-lab-faint">{label}</span>
+      <span className="w-16 shrink-0 text-right text-[10px] uppercase tracking-wide text-lab-faint">{label}</span>
       {cols.map((i) => (
-        <span key={i} className="w-5 text-center font-mono text-[10px] text-lab-muted">
+        <span key={i} className="w-5 text-center font-mono text-[11px] text-lab-muted">
           {render(i)}
         </span>
       ))}
@@ -39,7 +39,7 @@ export function BasisComparisonTable({
         <Row label="B basis" render={(i) => bobBases[i]} />
         {bobMeasurements && <Row label="B meas" render={(i) => bobMeasurements[i]} />}
         <div className="flex items-center gap-0.5">
-          <span className="w-16 shrink-0 text-right text-[9px] uppercase tracking-wide text-lab-faint">match</span>
+          <span className="w-16 shrink-0 text-right text-[10px] uppercase tracking-wide text-lab-faint">match</span>
           {cols.map((i) => {
             const ok = aliceBases[i] === bobBases[i];
             return (
@@ -52,7 +52,7 @@ export function BasisComparisonTable({
           })}
         </div>
       </div>
-      <p className="mt-2 text-[10px] text-lab-faint">
+      <p className="mt-2 text-[11px] text-lab-faint">
         Showing first {n} of {aliceBases.length} transmissions · <span className="text-accent-green">green = kept</span> ({matched}/{n} shown)
       </p>
     </div>

@@ -1,14 +1,14 @@
 "use client";
 import { useState } from "react";
-import { AppShell } from "@/components/AppShell";
-import { ComposerMode } from "@/components/ComposerMode";
-import { CryptographyLab } from "@/components/CryptographyLab";
-import { SimulatorLab } from "@/components/SimulatorLab";
-import type { Mode } from "@/components/ModeTabs";
+import { AppShell } from "@/components/shell/AppShell";
+import { ComposerMode } from "@/components/composer/ComposerMode";
+import { CryptographyLab } from "@/components/crypto/CryptographyLab";
+import { SimulatorLab } from "@/components/simulator/SimulatorLab";
+import type { Mode } from "@/components/shell/ModeTabs";
 import { PRESETS } from "@/lib/presets";
 import type { CircuitData } from "@/lib/types";
 
-const cloneCircuit = (c: CircuitData): CircuitData => JSON.parse(JSON.stringify(c));
+const cloneCircuit = (circuit: CircuitData): CircuitData => JSON.parse(JSON.stringify(circuit)) as CircuitData;
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("composer");
@@ -27,7 +27,7 @@ export default function Home() {
   }
 
   return (
-    <AppShell mode={mode} onModeChange={changeMode}>
+    <AppShell mode={mode} circuit={mode === "crypto" ? null : (mode === "simulator" ? labCircuit ?? circuit : circuit)} onModeChange={changeMode}>
       {mode === "composer" && <ComposerMode circuit={circuit} setCircuit={setCircuit} onOpenSimulatorLab={openSimulatorLab} />}
       {mode === "simulator" && <SimulatorLab composerCircuit={labCircuit ?? circuit} />}
       {mode === "crypto" && <CryptographyLab />}

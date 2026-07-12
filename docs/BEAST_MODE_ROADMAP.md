@@ -1,12 +1,15 @@
-# Beast Mode Roadmap
+# Advanced Development Roadmap
 
 The evolution of Quantum Composer from a simple visual composer into an
 educational **quantum simulation lab + quantum cryptography lab**, and where it
 can honestly go next.
 
-## Current features (V1)
+## V1 baseline retained
 
-- Visual circuit composer for 1–8 qubits (Next.js grid).
+- The original V1 exact request path remains limited to 1–8 qubits. The current
+  interactive grid can describe up to 128 qubits, uses a two-stage rendered-cell
+  guard (warn, then pause), and sends simulation outside the full V1 envelope to
+  V2. Wider structured circuits exist as generated descriptors in Simulator Lab.
 - Strict Pydantic-validated circuit JSON — **no user Python is ever executed**.
 - Qiskit code generation and OpenQASM 2 export.
 - Local Qiskit Aer simulation with counts histogram, depth, gate counts, and a
@@ -27,21 +30,30 @@ can honestly go next.
   optional `stim_stabilizer`, and an honest `auto` router.
 - Log-space resource estimator that never overflows, with safe/heavy/dangerous/
   infeasible risk labels and absolute hard qubit caps for exact engines.
-- Rejects infeasible circuits with a clear explanation instead of crashing.
+- Rejects circuits classified as infeasible with a clear explanation before
+  engine execution. Deployment-level memory, CPU, concurrency, and timeout
+  controls remain necessary.
 
 ### Quantum cryptography lab
 
 - `POST /crypto/bb84/simulate`, `/crypto/e91/simulate`, `/crypto/b92/simulate`,
-  `/crypto/qrng/simulate` — deterministic (seeded) protocol-level simulators.
+  `/crypto/qrng/simulate` — protocol-level statistical simulators; an explicit
+  repeated seed makes a run deterministic.
 - QBER, Eve intercept-resend, CHSH indicator (E91), conclusive-measurement stats
   (B92), and Toeplitz-hash privacy amplification.
 
 ### Frontend
 
+- Shared scientific app shell with backend health, mode/status rail, responsive
+  navigation, and visible structured-large-circuit limits.
+- **Composer** workspace with indexed circuit grid, gate details, direct
+  feasibility analysis, complete V1/V2 routing, and full-width code/results.
 - **Simulator Lab** tab: engine selector with availability, resource estimates,
-  Clifford classification, feasibility badge, large-circuit teaching presets, and
-  clear rejection messages.
-- **Cryptography Lab** tab: BB84 / E91 / B92 / QRNG with charts and explanations.
+  method guide, Clifford classification, feasibility badges, large-circuit
+  teaching presets, result metadata, and clear rejection messages.
+- **Cryptography Lab** tab: BB84 / E91 / B92 / QRNG protocol flows,
+  key/correlation views, QBER/CHSH, QRNG bias diagnostics, and educational
+  boundaries.
 
 ## Future (not yet built)
 
