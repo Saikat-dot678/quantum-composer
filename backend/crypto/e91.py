@@ -126,7 +126,9 @@ def simulate_e91(
     explanation = (
         f"The measured CHSH value is |S| = {abs(chsh_s):.3f}. The singlet state "
         "predicts 2*sqrt(2) ~ 2.83, which violates the classical bound of 2 and "
-        "certifies genuine entanglement. "
+        "would provide evidence of entanglement in a suitably controlled physical "
+        "experiment. Here it is a finite-sample software-model indicator, not "
+        "device-independent certification. "
     )
     if eve_enabled:
         explanation += (

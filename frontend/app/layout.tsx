@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import type { Viewport } from "next";
 import localFont from "next/font/local";
+import { ActionRegistryProvider } from "@/components/workspace/ActionRegistry";
+import { ToastProvider } from "@/components/workspace/ToastProvider";
+import { WorkspaceProvider } from "@/components/workspace/WorkspaceProvider";
+import { WorkspaceShell } from "@/components/workspace/WorkspaceShell";
 import "./globals.css";
 
 // Self-hosted, deterministic type system (latin subsets, ~114 KB total):
@@ -44,7 +48,15 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${fontUi.variable} ${fontDisplay.variable} ${fontMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        <WorkspaceProvider>
+          <ToastProvider>
+            <ActionRegistryProvider>
+              <WorkspaceShell>{children}</WorkspaceShell>
+            </ActionRegistryProvider>
+          </ToastProvider>
+        </WorkspaceProvider>
+      </body>
     </html>
   );
 }

@@ -1,26 +1,23 @@
 "use client";
 
-import { useMemo } from "react";
+import { useState } from "react";
 import { LIMITS } from "@/lib/constants";
 import { LAB_PRESETS } from "@/lib/labPresets";
 import { formatEngineName, formatInteger } from "@/lib/formatting";
-import type { EngineId, EnginesResponse, LabPreset } from "@/lib/labTypes";
+import type { CircuitAnalysis, EngineId, EnginesResponse, LabPreset } from "@/lib/labTypes";
 import type { CircuitData } from "@/lib/types";
+import { PlayIcon, RefreshIcon } from "@/components/ui/icons";
 import {
   Badge,
   Button,
-  Callout,
   FormField,
   NumberInput,
-  Panel,
-  SectionHeader,
-  SelectField,
   Toggle,
 } from "../ui/primitives";
 import {
-  ENGINE_ORDER,
   clampFloat,
   clampInteger,
+  engineIsAvailable,
   engineSupportsNoise,
   engineUsesMpsControls,
   type OptionalNumber,
@@ -34,6 +31,7 @@ interface SimulatorControlPanelProps {
   sourceNote: string;
   sourceExpectsRejection: boolean;
   engines: EnginesResponse | null;
+  analysis: CircuitAnalysis | null;
   engine: EngineId;
   shots: number;
   seed: OptionalNumber;
@@ -46,7 +44,6 @@ interface SimulatorControlPanelProps {
   runLoading: boolean;
   onLoadComposer: () => void;
   onLoadPreset: (preset: LabPreset) => void;
-  onEngineChange: (engine: EngineId) => void;
   onShotsChange: (value: number) => void;
   onSeedChange: (value: OptionalNumber) => void;
   onNoiseChange: (enabled: boolean) => void;
@@ -58,6 +55,8 @@ interface SimulatorControlPanelProps {
   onRun: () => void;
 }
 
+type RailView = "sources" | "options";
+
 export function SimulatorControlPanel({
   circuit,
   composerCircuit,
@@ -66,6 +65,7 @@ export function SimulatorControlPanel({
   sourceNote,
   sourceExpectsRejection,
   engines,
+  analysis,
   engine,
   shots,
   seed,
@@ -78,7 +78,6 @@ export function SimulatorControlPanel({
   runLoading,
   onLoadComposer,
   onLoadPreset,
-  onEngineChange,
   onShotsChange,
   onSeedChange,
   onNoiseChange,
@@ -89,256 +88,228 @@ export function SimulatorControlPanel({
   onAnalyze,
   onRun,
 }: SimulatorControlPanelProps) {
-  const engineInfo = useMemo(
-    () => new Map((engines?.engines ?? []).map((entry) => [entry.id, entry])),
-    [engines],
-  );
-  const selectedEngine = engineInfo.get(engine);
-  const selectedUnavailable = selectedEngine?.available === false;
+  const [view, setView] = useState<RailView>("sources");
   const noiseSupported = engineSupportsNoise(engine);
   const mpsControlsEnabled = engineUsesMpsControls(engine, allowApproximation);
-  const explicitMps = engine === "aer_mps";
+  const engineAvailable = engineIsAvailable(engine, engines, analysis);
+  const controlsDisabled = runLoading;
 
   return (
-    <aside className="space-y-4" aria-label="Simulator controls">
-      <Panel className="p-4">
-        <SectionHeader
-          eyebrow="Circuit source"
-          title="Active workload"
-          description="Load the live composer circuit or a teaching workload. Every source is analyzed automatically."
-        />
-
-        <div className="rounded-lg border border-accent-cyan/25 bg-accent-cyan/[.045] p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-lab-text">{sourceLabel}</p>
-            {sourceExpectsRejection && <Badge tone="red">rejection lesson</Badge>}
-          </div>
-          <p className="mt-1 text-[11px] leading-4 text-lab-muted">{sourceNote}</p>
-          <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-md bg-lab-bg/80 px-2 py-1.5">
-              <dt className="instrument-label">Qubits</dt>
-              <dd className="mt-0.5 font-mono text-xs font-semibold text-lab-text">{formatInteger(circuit.num_qubits)}</dd>
-            </div>
-            <div className="rounded-md bg-lab-bg/80 px-2 py-1.5">
-              <dt className="instrument-label">Operations</dt>
-              <dd className="mt-0.5 font-mono text-xs font-semibold text-lab-text">{formatInteger(circuit.operations.length)}</dd>
-            </div>
-            <div className="rounded-md bg-lab-bg/80 px-2 py-1.5">
-              <dt className="instrument-label">Source shots</dt>
-              <dd className="mt-0.5 font-mono text-xs font-semibold text-lab-text">{formatInteger(circuit.shots)}</dd>
-            </div>
-          </dl>
+    <div className="flex min-h-0 flex-1 flex-col bg-lab-surface/70">
+      <div className="border-b border-lab-border p-3">
+        <p className="instrument-label text-accent-cyan">Workload rail</p>
+        <div className="mt-2 grid grid-cols-2 gap-1 rounded-lg border border-lab-border bg-lab-bg p-1" aria-label="Simulator rail view">
+          {(["sources", "options"] as const).map((item) => (
+            <button
+              key={item}
+              type="button"
+              aria-pressed={view === item}
+              onClick={() => setView(item)}
+              className={`min-h-8 rounded-md px-2 text-[11px] font-semibold capitalize transition ${view === item ? "bg-lab-raised text-accent-cyan" : "text-lab-faint hover:text-lab-muted"}`}
+            >
+              {item === "sources" ? "Circuits" : "Run options"}
+            </button>
+          ))}
         </div>
+      </div>
 
-        <Button
-          variant={sourceId === "composer" ? "primary" : "secondary"}
-          size="sm"
-          className="mt-3 w-full"
-          onClick={onLoadComposer}
-        >
-          Load current composer circuit
-          <span className="font-mono text-[10px] opacity-70">{composerCircuit.num_qubits}q</span>
-        </Button>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {view === "sources" ? (
+          <div className="p-3">
+            <div className="border-l-2 border-accent-cyan bg-accent-cyan/[.045] px-3 py-2.5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-lab-text">{sourceLabel}</p>
+                  <p className="mt-1 text-[10px] leading-4 text-lab-muted">{sourceNote}</p>
+                </div>
+                {sourceExpectsRejection ? <Badge tone="red">rejection lesson</Badge> : <Badge tone="cyan">active</Badge>}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10px] text-lab-faint">
+                <span>{formatInteger(circuit.num_qubits)}q</span>
+                <span>{formatInteger(circuit.num_clbits)}c</span>
+                <span>{formatInteger(circuit.operations.length)} ops</span>
+                <span>{formatInteger(circuit.shots)} source shots</span>
+              </div>
+            </div>
 
-        <div className="mt-4">
-          <p className="instrument-label mb-2">Teaching presets</p>
-          <div className="max-h-[390px] space-y-1.5 overflow-y-auto pr-1">
-            {LAB_PRESETS.map((preset) => {
-              const active = sourceId === preset.id;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => onLoadPreset(preset)}
-                  className={`w-full rounded-lg border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan ${
-                    active
-                      ? "border-accent-cyan/45 bg-accent-cyan/[.08]"
-                      : "border-lab-border bg-lab-raised/35 hover:border-lab-borderStrong hover:bg-lab-raised/70"
-                  }`}
-                >
-                  <span className="flex items-start justify-between gap-2">
-                    <span className={`text-xs font-semibold ${active ? "text-accent-cyan" : "text-lab-text"}`}>
-                      {preset.name}
+            <button
+              type="button"
+              disabled={controlsDisabled}
+              onClick={onLoadComposer}
+              className={`mt-3 flex min-h-10 w-full items-center justify-between rounded-lg border px-3 text-left text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-45 ${sourceId === "composer" ? "border-accent-cyan/45 bg-accent-cyan/[.08] text-accent-cyan" : "border-lab-borderStrong bg-lab-raised/35 text-lab-text hover:border-accent-cyan/40"}`}
+            >
+              <span>Follow live Composer</span>
+              <span className="font-mono text-[10px] text-lab-faint">{composerCircuit.num_qubits}q · {composerCircuit.operations.length} ops</span>
+            </button>
+
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <p className="instrument-label">Structured teaching workloads</p>
+              <Badge tone="neutral">generated on demand</Badge>
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {LAB_PRESETS.map((preset) => {
+                const active = sourceId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    disabled={controlsDisabled}
+                    aria-pressed={active}
+                    onClick={() => onLoadPreset(preset)}
+                    className={`w-full border-l-2 px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${active ? "border-l-accent-cyan bg-accent-cyan/[.065]" : "border-l-lab-borderStrong bg-lab-raised/20 hover:border-l-accent-cyan/45 hover:bg-lab-raised/45"}`}
+                  >
+                    <span className="flex items-start justify-between gap-2">
+                      <span className={`text-[11px] font-semibold ${active ? "text-accent-cyan" : "text-lab-text"}`}>{preset.name}</span>
+                      {preset.expectRejection && <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-accent-red">rejects</span>}
                     </span>
-                    {preset.expectRejection && <Badge tone="red" className="shrink-0 px-1.5 py-0.5 text-[9px]">rejects</Badge>}
-                  </span>
-                  <span className="mt-1 block text-[11px] leading-4 text-lab-faint">{preset.description}</span>
-                  <span className="mt-1 block font-mono text-[10px] text-lab-faint">
-                    {formatInteger(preset.descriptor.numQubits)}q · ~{formatInteger(preset.descriptor.operationsEstimate)} ops · {preset.descriptor.family.replaceAll("_", " ")}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-2 text-[11px] leading-4 text-lab-faint">
-            Presets are generated on demand from compact descriptors — nothing is drawn on the visual grid. Protocol-level workloads (BB84, E91, B92, QRNG) live in the Cryptography Lab tab.
-          </p>
-        </div>
-      </Panel>
-
-      <Panel className="p-4">
-        <SectionHeader
-          eyebrow="Execution setup"
-          title="Simulation controls"
-          description="The V2 router checks the selected method before allocating exact state memory."
-        />
-
-        <div className="space-y-4">
-          <SelectField
-            id="simulator-engine"
-            label="Engine"
-            value={engine}
-            onChange={(event) => onEngineChange(event.target.value as EngineId)}
-            hint={selectedEngine?.description ?? "Engine availability is loaded from the backend catalog."}
-          >
-            {ENGINE_ORDER.map((id) => {
-              const info = engineInfo.get(id);
-              return (
-                <option key={id} value={id} disabled={info?.available === false}>
-                  {info?.name ?? formatEngineName(id)}{info?.available === false ? " (unavailable)" : ""}
-                </option>
-              );
-            })}
-          </SelectField>
-
-          {selectedEngine && (
-            <div className="rounded-lg border border-lab-border bg-lab-raised/35 p-3 text-[11px] leading-4 text-lab-muted">
-              <p><span className="font-semibold text-lab-text">Best for:</span> {selectedEngine.best_for}</p>
-              <p className="mt-1"><span className="font-semibold text-lab-text">Limit:</span> {selectedEngine.limitations}</p>
+                    <span className="mt-1 block text-[10px] leading-4 text-lab-faint">{preset.teaches}</span>
+                    <span className="mt-1 block font-mono text-[9px] text-lab-faint">
+                      {formatInteger(preset.descriptor.numQubits)}q · ~{formatInteger(preset.descriptor.operationsEstimate)} ops · {formatEngineName(preset.suggestedEngine)}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          )}
-
-          {selectedUnavailable && (
-            <Callout tone="danger" title="Selected engine unavailable">
-              {selectedEngine?.unavailable_reason ?? "The backend reports that this engine cannot run."}
-            </Callout>
-          )}
-
-          {explicitMps && (
-            <Callout tone="warning" title="Explicit MPS is an approximation opt-in">
-              Selecting Aer MPS directly bypasses the auto router&apos;s approximation gate. Accuracy and runtime depend on entanglement and bond-dimension growth.
-            </Callout>
-          )}
-
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-            <NumberInput
-              id="simulator-shots"
-              label="Measurement shots"
-              min={LIMITS.shots.min}
-              max={LIMITS.shots.v2Max}
-              value={shots}
-              onChange={(event) => onShotsChange(clampInteger(Number(event.target.value), LIMITS.shots.min, LIMITS.shots.v2Max, 1024))}
-              hint="V2 accepts 1 to 1,000,000 samples."
-            />
-            <NumberInput
-              id="simulator-seed"
-              label="Seed (optional)"
-              min={0}
-              max={Number.MAX_SAFE_INTEGER}
-              value={seed}
-              placeholder="random"
-              onChange={(event) => {
-                const value = event.target.value;
-                onSeedChange(value === "" ? "" : clampInteger(Number(value), 0, Number.MAX_SAFE_INTEGER, 0));
-              }}
-              hint="Set a non-negative seed for repeatable samples."
-            />
           </div>
+        ) : (
+          <div className="space-y-4 p-3">
+            <div className="border-l-2 border-accent-cyan bg-lab-raised/35 px-3 py-2.5">
+              <p className="instrument-label">Selected execution route</p>
+              <div className="mt-1.5 flex items-center justify-between gap-2">
+                <span className="font-mono text-xs font-semibold text-accent-cyan">{formatEngineName(engine)}</span>
+                <Badge tone={engineAvailable === false ? "red" : engineAvailable === true ? "green" : "neutral"} dot>
+                  {engineAvailable === false ? "unavailable" : engineAvailable === true ? "available" : "checking"}
+                </Badge>
+              </div>
+              <p className="mt-1 text-[10px] leading-4 text-lab-faint">Select a method from the engine lanes in the analysis canvas.</p>
+            </div>
 
-          <FormField
-            htmlFor="simulator-memory-budget"
-            label={<>Run memory budget <span className="font-mono text-accent-cyan">{formatInteger(maxMemoryMb)} MB</span></>}
-            hint="This budget is sent to simulate-v2. It does not measure the server's physical RAM."
-          >
-            <input
-              id="simulator-memory-budget"
-              type="range"
-              min={LIMITS.simulation.minMemoryBudgetMb}
-              max={LIMITS.simulation.maxMemoryBudgetMb}
-              step={16}
-              value={maxMemoryMb}
-              onChange={(event) => onMaxMemoryChange(clampInteger(Number(event.target.value), LIMITS.simulation.minMemoryBudgetMb, LIMITS.simulation.maxMemoryBudgetMb, LIMITS.simulation.defaultMemoryBudgetMb))}
-              className="w-full accent-cyan-400"
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <NumberInput
+                id="simulator-shots"
+                label="Measurement shots"
+                min={LIMITS.shots.min}
+                max={LIMITS.shots.v2Max}
+                disabled={controlsDisabled}
+                value={shots}
+                onChange={(event) => onShotsChange(clampInteger(Number(event.target.value), LIMITS.shots.min, LIMITS.shots.v2Max, 1024))}
+                hint="1–1,000,000 samples."
+              />
+              <NumberInput
+                id="simulator-seed"
+                label="Seed (optional)"
+                min={0}
+                max={Number.MAX_SAFE_INTEGER}
+                disabled={controlsDisabled}
+                value={seed}
+                placeholder="random"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  onSeedChange(value === "" ? "" : clampInteger(Number(value), 0, Number.MAX_SAFE_INTEGER, 0));
+                }}
+                hint="Fix for repeatable sampling."
+              />
+            </div>
+
+            <FormField
+              htmlFor="simulator-memory-budget"
+              label={<>Run budget <span className="font-mono text-accent-cyan">{formatInteger(maxMemoryMb)} MB</span></>}
+              hint="A router guard, not a measurement of free server RAM. Engine lanes recalculate immediately."
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  id="simulator-memory-budget"
+                  type="range"
+                  min={LIMITS.simulation.minMemoryBudgetMb}
+                  max={LIMITS.simulation.maxMemoryBudgetMb}
+                  step={16}
+                  disabled={controlsDisabled}
+                  value={maxMemoryMb}
+                  onChange={(event) => onMaxMemoryChange(clampInteger(Number(event.target.value), LIMITS.simulation.minMemoryBudgetMb, LIMITS.simulation.maxMemoryBudgetMb, LIMITS.simulation.defaultMemoryBudgetMb))}
+                  className="min-w-0 flex-1 accent-cyan-400 disabled:opacity-45"
+                />
+                <input
+                  type="number"
+                  aria-label="Run memory budget in megabytes"
+                  min={LIMITS.simulation.minMemoryBudgetMb}
+                  max={LIMITS.simulation.maxMemoryBudgetMb}
+                  step={16}
+                  disabled={controlsDisabled}
+                  value={maxMemoryMb}
+                  onChange={(event) => onMaxMemoryChange(clampInteger(Number(event.target.value), LIMITS.simulation.minMemoryBudgetMb, LIMITS.simulation.maxMemoryBudgetMb, LIMITS.simulation.defaultMemoryBudgetMb))}
+                  className="h-9 w-24 rounded-md border border-lab-borderStrong bg-lab-bg px-2 text-right font-mono text-[11px] text-lab-text outline-none focus:border-accent-cyan"
+                />
+              </div>
+            </FormField>
+
+            <Toggle
+              checked={noiseEnabled && noiseSupported}
+              disabled={controlsDisabled || !noiseSupported}
+              onChange={onNoiseChange}
+              label="Depolarizing noise"
+              description={noiseSupported ? "Auto or density matrix can model this option." : "Selecting this explicit engine disabled noise."}
             />
-          </FormField>
 
-          <Toggle
-            checked={noiseEnabled && noiseSupported}
-            disabled={!noiseSupported}
-            onChange={onNoiseChange}
-            label="Depolarizing noise"
-            description={
-              noiseSupported
-                ? "Auto routes feasible noisy workloads to density-matrix simulation."
-                : "Noise is only implemented by Auto and Aer density matrix; this engine would ignore it."
-            }
-          />
-
-          <Toggle
-            checked={explicitMps ? true : allowApproximation}
-            disabled={engine !== "auto"}
-            onChange={onAllowApproximationChange}
-            label={explicitMps ? "MPS approximation acknowledged" : "Allow auto-router MPS"}
-            description={
-              explicitMps
-                ? "Direct MPS selection already opts into its entanglement-dependent trade-offs."
-                : engine === "auto"
-                  ? "When exact simulation is infeasible, Auto may try MPS for a low-entanglement circuit."
-                  : "This switch only affects Auto. Choose Aer MPS directly to request that method."
-            }
-          />
-
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-            <NumberInput
-              id="simulator-mps-bond"
-              label="MPS max bond (optional)"
-              min={1}
-              max={100_000}
-              disabled={!mpsControlsEnabled}
-              value={mpsBondDimension}
-              placeholder="backend default"
-              onChange={(event) => {
-                const value = event.target.value;
-                onMpsBondDimensionChange(value === "" ? "" : clampInteger(Number(value), 1, 100_000, 1));
-              }}
-              hint="A cap can control cost but may truncate the state."
+            <Toggle
+              checked={engine === "aer_mps" ? true : allowApproximation}
+              disabled={controlsDisabled || engine !== "auto"}
+              onChange={onAllowApproximationChange}
+              label={engine === "aer_mps" ? "MPS trade-off acknowledged" : "Allow Auto to try MPS"}
+              description={engine === "auto" ? "Permits an entanglement-dependent approximation path after exact methods stop fitting." : "Only Auto uses this switch; choosing MPS directly is the opt-in."}
             />
-            <NumberInput
-              id="simulator-mps-threshold"
-              label="MPS truncation (optional)"
-              min={Number.MIN_VALUE}
-              max={1}
-              step="any"
-              disabled={!mpsControlsEnabled}
-              value={mpsTruncationThreshold}
-              placeholder="backend default"
-              onChange={(event) => {
-                const value = event.target.value;
-                onMpsTruncationThresholdChange(value === "" ? "" : clampFloat(Number(value), Number.EPSILON, 1, Number.EPSILON));
-              }}
-              hint="Smaller thresholds retain more information and cost more."
-            />
+
+            <details className="border-t border-lab-border pt-3" open={mpsControlsEnabled}>
+              <summary className="cursor-pointer text-[11px] font-semibold text-lab-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan">MPS accuracy controls</summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                <NumberInput
+                  id="simulator-mps-bond"
+                  label="Maximum bond dimension"
+                  min={1}
+                  max={100_000}
+                  disabled={controlsDisabled || !mpsControlsEnabled}
+                  value={mpsBondDimension}
+                  placeholder="backend default"
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    onMpsBondDimensionChange(value === "" ? "" : clampInteger(Number(value), 1, 100_000, 1));
+                  }}
+                  hint="A restrictive cap can truncate the state."
+                />
+                <NumberInput
+                  id="simulator-mps-threshold"
+                  label="Truncation threshold"
+                  min={Number.EPSILON}
+                  max={1}
+                  step="any"
+                  disabled={controlsDisabled || !mpsControlsEnabled}
+                  value={mpsTruncationThreshold}
+                  placeholder="backend default"
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    onMpsTruncationThresholdChange(value === "" ? "" : clampFloat(Number(value), Number.EPSILON, 1, Number.EPSILON));
+                  }}
+                  hint="Smaller retains more information and costs more."
+                />
+              </div>
+            </details>
           </div>
+        )}
+      </div>
 
-          <Callout tone="info" title="Two different memory baselines">
-            Analyze uses the backend&apos;s fixed 1,024 MB baseline. The slider above affects only the simulation run, so its final resource classification may differ.
-          </Callout>
-
-          <div className="grid grid-cols-2 gap-2">
-            <Button variant="secondary" loading={analysisLoading} disabled={runLoading} onClick={onAnalyze}>
-              Re-analyze
-            </Button>
-            <Button variant="primary" loading={runLoading} disabled={analysisLoading || selectedUnavailable} onClick={onRun}>
-              Run simulation
-            </Button>
-          </div>
-
-          <p className="text-[11px] leading-4 text-lab-faint">
-            No hardware job is submitted. Real-hardware recommendations are guidance only; this repository exposes no provider execution route.
+      <div className="border-t border-lab-border bg-lab-panel/95 p-3">
+        {runLoading && (
+          <p className="mb-2 flex items-center gap-2 text-[10px] leading-4 text-accent-amber">
+            <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> Options are locked while the synchronous backend run is active.
           </p>
+        )}
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="secondary" size="sm" loading={analysisLoading} disabled={runLoading} onClick={onAnalyze}>Analyze</Button>
+          <Button variant="primary" size="sm" loading={runLoading} disabled={analysisLoading || engineAvailable === false} onClick={onRun}>
+            {!runLoading && <PlayIcon className="h-3.5 w-3.5" />} Run
+          </Button>
         </div>
-      </Panel>
-    </aside>
+        <p className="mt-2 text-[9px] leading-4 text-lab-faint">Classical simulation only. No hardware job is submitted.</p>
+      </div>
+    </div>
   );
 }

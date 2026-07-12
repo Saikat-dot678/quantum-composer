@@ -3,14 +3,73 @@ function truncateKey(key: string): string {
   return `${key.slice(0, 12)}…${key.slice(-6)}`;
 }
 
+type CountEntry = [key: string, value: number];
+
+function entryIsSmaller(left: CountEntry, right: CountEntry): boolean {
+  return left[1] < right[1] || (left[1] === right[1] && left[0] > right[0]);
+}
+
+function siftUp(heap: CountEntry[], index: number): void {
+  let cursor = index;
+  while (cursor > 0) {
+    const parent = Math.floor((cursor - 1) / 2);
+    if (!entryIsSmaller(heap[cursor], heap[parent])) break;
+    [heap[parent], heap[cursor]] = [heap[cursor], heap[parent]];
+    cursor = parent;
+  }
+}
+
+function siftDown(heap: CountEntry[], index: number): void {
+  let cursor = index;
+  while (true) {
+    const left = cursor * 2 + 1;
+    const right = left + 1;
+    let smallest = cursor;
+    if (left < heap.length && entryIsSmaller(heap[left], heap[smallest])) smallest = left;
+    if (right < heap.length && entryIsSmaller(heap[right], heap[smallest])) smallest = right;
+    if (smallest === cursor) return;
+    [heap[cursor], heap[smallest]] = [heap[smallest], heap[cursor]];
+    cursor = smallest;
+  }
+}
+
+/**
+ * Find the most frequent rows without materializing and sorting every outcome.
+ * This is O(distinct outcomes × log(maxRows)) and retains only maxRows tuples.
+ */
+function summarizeCounts(counts: Record<string, number>, maxRows: number) {
+  const limit = Math.max(0, Math.floor(maxRows));
+  const heap: CountEntry[] = [];
+  let total = 0;
+  let distinctCount = 0;
+
+  for (const key in counts) {
+    if (!Object.prototype.hasOwnProperty.call(counts, key)) continue;
+    const value = counts[key];
+    total += value;
+    distinctCount += 1;
+    if (limit === 0) continue;
+    const entry: CountEntry = [key, value];
+    if (heap.length < limit) {
+      heap.push(entry);
+      siftUp(heap, heap.length - 1);
+    } else if (entryIsSmaller(heap[0], entry)) {
+      heap[0] = entry;
+      siftDown(heap, 0);
+    }
+  }
+
+  heap.sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  return { shown: heap, total, distinctCount };
+}
+
 export function HistogramPanel({ counts, maxRows = 20 }: { counts: Record<string, number>; maxRows?: number }) {
-  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  if (entries.length === 0) {
+  const { shown, total: rawTotal, distinctCount } = summarizeCounts(counts, maxRows);
+  if (distinctCount === 0) {
     return <div className="flex h-40 items-center justify-center text-sm text-lab-faint">No measurement outcomes were returned.</div>;
   }
-  const total = entries.reduce((sum, [, value]) => sum + value, 0) || 1;
-  const max = entries[0][1] || 1;
-  const shown = entries.slice(0, maxRows);
+  const total = rawTotal || 1;
+  const max = shown[0]?.[1] || 1;
   return (
     <div className="space-y-2" role="list" aria-label="Measurement outcomes">
       {shown.map(([key, value]) => (
@@ -24,8 +83,8 @@ export function HistogramPanel({ counts, maxRows = 20 }: { counts: Record<string
           </div>
         </div>
       ))}
-      {entries.length > shown.length && (
-        <p className="pt-1 text-[11px] text-lab-faint">+ {entries.length - shown.length} more outcomes · {entries.length} distinct states total</p>
+      {distinctCount > shown.length && (
+        <p className="pt-1 text-[11px] text-lab-faint">+ {distinctCount - shown.length} more outcomes · {distinctCount} distinct states total</p>
       )}
     </div>
   );

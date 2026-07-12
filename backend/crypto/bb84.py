@@ -105,8 +105,10 @@ def simulate_bb84(
     else:
         explanation += (
             "With no eavesdropper the only errors come from channel noise, so the "
-            "QBER stays low and the key is usable after error correction and "
-            "privacy amplification."
+            "QBER usually stays low. The sifted strings still require authenticated "
+            "error reconciliation, which this simulator does not implement. The "
+            "privacy-amplification output below is an Alice-side educational "
+            "illustration, not a proven shared final key."
         )
 
     charts_data = {

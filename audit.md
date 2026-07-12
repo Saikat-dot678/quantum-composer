@@ -60,8 +60,9 @@ low-entanglement circuits can use matrix-product-state simulation. Arbitrary
 - Frontend unit, component, automated accessibility, visual-regression, and
   committed browser end-to-end tests are still absent. Browser happy paths were
   exercised manually in this audit, but they are not yet repeatable in CI.
-- Circuit editing still has no undo/redo history or explicit classical-target
-  selector for measurement placement; register reductions are destructive.
+- Circuit editing now has workspace-level undo/redo (§14), but still lacks an
+  explicit classical-target selector for measurement placement; register
+  reductions remain destructive edits (though undoable).
 - Request tokens prevent stale UI writes, but long backend simulations are not
   cancelled at the transport/server level and the API has no job queue or
   wall-clock enforcement.
@@ -1088,3 +1089,161 @@ passed against the production build in this workspace. A dedicated
 - Playwright covers smoke paths only; no visual-regression or axe automation
   yet. The suite runs in CI via the `frontend-e2e` job, but screenshots are not
   compared pixel-wise.
+
+## 14. Workspace Platform Redesign (research-driven)
+
+### Research performed
+
+Product research (July 2026): **IBM Quantum Composer** — drag-and-drop editing
+onto qubit wires, a color-categorized operations catalog, live sync between the
+visual circuit and an OpenQASM code editor, inline state visualization
+(q-sphere/probability), and local file ownership. **Quirk / Quirk-E** —
+real-time simulation while editing and, decisively, **bookmarkable/linkable
+circuits**: the entire circuit lives in the URL. Frontend-architecture research:
+⌘K command-palette patterns (cmdk/kbar as used by Linear/Raycast-class tools) —
+the palette as a bridge between discoverable GUI and fast keyboard workflows,
+grouped commands, a visible Ctrl-K affordance, shortcut hints taught in-palette;
+plus App Router guidance on route-level workspaces and hotkey handling being a
+separate concern from the palette itself.
+
+### Conclusions applied
+
+1. Serious circuit tools make circuits *addressable* (Quirk's URLs, IBM's
+   files). 2. Multi-surface workspaces belong on real routes, not page-local tab
+   state. 3. Keyboard-first workflows need both global shortcuts and a palette.
+   4. Editors are expected to have undo/redo and to never lose work.
+
+### Changes implemented
+
+- **Routed workspaces**: `/composer`, `/simulator`, `/crypto` are real
+  App-Router routes with per-route code splitting (13.2 / 14.7 / 8.7 kB route
+  chunks replace one monolithic page). The root `/` server-redirects to
+  `/composer`. Mode tabs push routes, so browser back/forward and deep links
+  work; a route-level `app/error.tsx` boundary gives honest recovery copy.
+- **Workspace provider** (`components/workspace/WorkspaceProvider.tsx`): owns
+  the circuit across routes with a 100-entry undo/redo history (Ctrl+Z /
+  Ctrl+Shift+Z / Ctrl+Y, suppressed while typing in fields), localStorage
+  autosave with hydration-safe restore, and the explicit composer→Simulator
+  handoff (`labCircuit`) that now survives navigation instead of resetting.
+- **Shareable circuit links** (`lib/circuitShare.ts`): the whole circuit is
+  encoded as base64url JSON in `/composer?c=…` (Quirk's pattern). Decoding
+  treats links as untrusted input — gate allowlist, register-range checks, and
+  interactive-limit validation — and a shared link takes precedence over the
+  local autosave, is consumed once, and is stripped from the URL. Share is
+  capped at 400 operations / ~7 KB URLs with an honest refusal beyond that.
+- **Command palette** (`components/workspace/CommandPalette.tsx`): a
+  dependency-free Ctrl+K dialog with grouped commands (Navigate / Circuit /
+  Presets), substring filtering, full listbox semantics
+  (combobox + aria-activedescendant, arrow/Enter/Esc, focus restore), and a
+  visible "Commands · Ctrl K" affordance in the top bar.
+- **Toolbar**: Undo/Redo buttons with disabled states and a Share-link button
+  with copied/too-large feedback.
+
+### Testing
+
+`npm run typecheck`, `npm run lint`, `npm run build` (7 static pages, three
+route chunks) all pass. The Playwright suite grew from 4 to 8 scenarios — root
+redirect + telemetry, route navigation, deep links, `?c=` share decoding + URL
+cleanup, undo/redo via keyboard, palette navigation, roving grid keys, live
+state preview — all 8 passing against the production build. Backend
+`pytest -q`: 34 passed (no backend changes).
+
+### Remaining limitations
+
+- Share links carry no compression; very deep circuits must use JSON export
+  (the UI says so explicitly).
+- Autosave is single-slot (no named projects or recent-history list yet).
+- The palette exposes navigation, presets, and circuit actions; run/analyze
+  still live in their modes because they depend on mode-local option state.
+- Simulator Lab and Cryptography Lab route state (options, results) resets on
+  navigation; only the circuit and handoff persist by design.
+
+# Complete Frontend Rebuild
+
+## Why the previous redesign was insufficient
+
+The routed-workspace pass fixed architecture but left the *interface* reading as
+a dashboard: a horizontal tab strip in a header, feature panels stacked as
+rectangular cards, and workspace capabilities (projects, share, run) scattered
+across page-local toolbars. It also left the tree mid-refactor — `shell/` and
+`StatePreviewPanel` were deleted while their importers survived, so `typecheck`
+failed outright on the baseline of this pass.
+
+## Research performed
+
+Quantum tooling: **IBM Quantum Composer** (drag onto wires, categorized
+operations catalog, circuit↔OpenQASM sync, inline state visualization) and
+**Quirk** (edit-time simulation; the entire circuit encoded in the URL).
+Frontend patterns: **⌘K palettes** (cmdk/kbar in Linear/Raycast-class tools —
+grouped commands, a visible affordance, shortcut hints taught in-palette,
+hotkeys as a separate concern) and **App Router** guidance on route workspaces.
+The decisive borrowed idea is the **activity rail** familiar from browser IDEs:
+persistent mode switching that leaves the whole viewport to the workspace.
+
+## New design direction: Instrument Workbench
+
+A left **activity rail** (icon + micro-label, wire-node active marker) replaces
+the header tab strip and becomes a bottom tab bar under `lg`. A slim **console
+header** carries only live instruments: circuit telemetry from the client-side
+analyzer, autosave/project state, and backend health with retry. Global
+capabilities live in global surfaces — a **projects drawer** and the **⌘K
+palette** — not in per-page toolbars.
+
+## Faults found and fixed
+
+- **Broken build**: missing `shell/*` and `StatePreviewPanel` modules with live
+  imports (`typecheck` failed). Rebuilt as `shell/NavRail`, `shell/ConsoleHeader`,
+  `shell/types`, and a new `StatePreviewPanel`.
+- **WCAG contrast failures** (found by the new axe suite, not by eye): the
+  `lab.faint` token was 4.44:1 on raised surfaces and a `text-lab-faint/70`
+  variant was 2.87:1. Recomputed and replaced with `#7d90a4` (≥ 4.5:1 on every
+  lab surface, verified numerically); removed the opacity variant.
+- **Hydration race in tests**: shortcut presses fired before React attached the
+  listener. Fixed with retrying open helpers (`e2e/helpers.ts`) rather than
+  sleeps.
+- Share links were uncompressed; the toolbar used the legacy encoder.
+
+## Features implemented in this pass
+
+- **Named projects + recents**: a `ProjectRepository` boundary (cloud-swappable)
+  with v2 envelope, corruption recovery, save/rename/duplicate/delete/search,
+  `lastOpenedAt` recents, JSON import/export, autosave bound to the active
+  project, and a drawer UI. Recents also appear in the palette.
+- **Compressed share links**: `?c2=` = base64url(deflate-raw(JSON)) via native
+  `CompressionStream` — no dependency, with a decompression-bomb guard, strict
+  post-decode validation, `?c=` backward compatibility, and an explanatory toast
+  on invalid links. Nothing from a URL is ever executed.
+- **Registered-actions palette**: views contribute commands while mounted
+  (`useRegisterActions`), so Composer's Run / Analyze / Generate appear in ⌘K
+  without coupling the palette to any page. Plus projects, presets, share,
+  undo/redo, navigation.
+- **Interactive Bloch sphere**: orthographic 3-D projection in plain SVG
+  (no Three.js), drag- and arrow-key-rotatable, lazy-loaded via `next/dynamic`,
+  live from the local statevector. For 2 qubits it computes **concurrence**
+  and states honestly that an entangled pair has no single-qubit Bloch
+  description. Above 5 qubits it teaches the exponential wall instead.
+- **Toasts** (polite live region) for workspace events, and route-fade / drawer
+  motion behind `prefers-reduced-motion`.
+
+## Tests added
+
+`e2e/a11y.spec.ts` — axe (WCAG 2 A/AA tags) on `/composer`, `/simulator`,
+`/crypto`, the palette, and the projects drawer, failing on serious/critical.
+`e2e/visual.spec.ts` — screenshots for three routes × desktop/phone (skipped in
+CI: baselines are platform-specific). `e2e/smoke.spec.ts` grew to 12 scenarios
+including compressed + legacy + invalid share links, clipboard round-trip,
+projects save/recents, and palette-registered actions.
+
+## Results
+
+`typecheck`, `lint` (`--max-warnings 0`), `build` (7 pages, 3 route chunks) pass.
+**Playwright 23/23** (12 smoke, 5 a11y, 6 visual). Backend **pytest 47 passed**.
+
+## Remaining limitations
+
+- Visual baselines are Windows-rendered and skipped in CI.
+- The Bloch sphere is hand-rolled SVG; a true 3-D lit sphere would need R3F.
+- No gate drag-and-drop yet (click placement + roving keyboard only), and no
+  circuit minimap or DOM virtualization — the two-stage cell guard still governs
+  large grids.
+- Simulator/Crypto option state still resets on navigation by design.

@@ -109,3 +109,23 @@ def test_analyze_endpoint_large_clifford_reports_scalable():
     assert body["feasibility_status"] == "clifford_scalable"
     # 200 qubits is astronomically large: the human string uses scientific notation.
     assert "e+" in body["estimated_statevector_memory_human"]
+
+
+def test_analyzer_stable_sorts_visual_moments_before_depth():
+    # Raw list order deliberately differs from visual/execution order. Without
+    # the stable moment sort this sequence greedily reports depth 4 instead of 3.
+    operations = _ops(
+        [
+            {"gate": "x", "qubits": [0], "moment": 0},
+            {"gate": "cx", "qubits": [0, 1], "moment": 1},
+            {"gate": "x", "qubits": [0], "moment": 2},
+            {"gate": "x", "qubits": [1], "moment": 0},
+            {"gate": "x", "qubits": [1], "moment": 2},
+        ]
+    )
+    analysis = analyze_circuit(
+        num_qubits=2,
+        num_clbits=0,
+        operations=operations,
+    )
+    assert analysis["depth"] == 3

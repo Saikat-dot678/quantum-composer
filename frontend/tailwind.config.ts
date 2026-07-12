@@ -17,7 +17,8 @@ export default {
           borderStrong: "#2a3c4e",
           text: "#e6edf4",
           muted: "#9aa9b8",
-          faint: "#6f8092",
+          // WCAG AA: >= 4.5:1 against every lab surface (verified by the axe suite).
+          faint: "#7d90a4",
         },
         // Semantic accents: cyan=quantum sim, green=safe, amber=heavy, red=infeasible.
         accent: {

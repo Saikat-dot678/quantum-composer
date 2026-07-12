@@ -1,10 +1,11 @@
 """Privacy amplification via Toeplitz-matrix universal hashing.
 
-After sifting and error estimation, Alice and Bob share a partially-secret key:
-an eavesdropper may hold some correlated information. Privacy amplification
-compresses the key with a universal hash function so the adversary's residual
-information becomes negligible. This module implements a Toeplitz hash (a
-standard, efficient choice) and a leftover-hash-lemma-style length estimate.
+After sifting and error estimation, Alice and Bob may still hold different raw
+strings and an eavesdropper may hold correlated information. A real protocol
+first performs authenticated error reconciliation, then privacy amplification.
+This module demonstrates only the latter transformation on one supplied string:
+it implements a Toeplitz hash and a simplified leftover-hash-style length
+estimate.
 
 This is an educational demonstration, not a hardened cryptographic
 implementation.
@@ -67,7 +68,11 @@ def privacy_amplify(
     seed: int | None = None,
     security_parameter: int = 16,
 ) -> dict[str, Any]:
-    """Run leftover-hash length estimation + Toeplitz hashing on a sifted key."""
+    """Run a simplified length estimate + Toeplitz hash on one sifted string.
+
+    This helper does not reconcile Alice and Bob's strings and therefore does
+    not establish that both parties possess the returned output.
+    """
     out_len = secure_key_length(len(sifted_key), qber, security_parameter)
     final_key = toeplitz_hash(sifted_key, out_len, seed=seed)
     return {
@@ -77,9 +82,11 @@ def privacy_amplify(
         "final_key": final_key,
         "estimated_leaked_fraction": min(1.0, 2.0 * binary_entropy(qber)),
         "explanation": (
-            "Privacy amplification shrinks the reconciled key with a universal "
-            "(Toeplitz) hash so an eavesdropper's partial information is destroyed. "
+            "This Alice-side privacy-amplification illustration shrinks one supplied "
+            "sifted string with a universal (Toeplitz) hash. It does not perform "
+            "error reconciliation or establish a shared final key. "
             f"About {min(100.0, 200.0 * binary_entropy(qber)):.1f}% of the key length "
-            "is sacrificed to account for leakage and error correction."
+            "is reserved by this simplified length model for assumed leakage and "
+            "error-correction costs."
         ),
     }

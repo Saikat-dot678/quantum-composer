@@ -1,18 +1,8 @@
 import { formatEngineName, formatInteger } from "@/lib/formatting";
 import type { CircuitAnalysis, EnginesResponse } from "@/lib/labTypes";
-import { CliffordBadge, FeasibilityBadge, RiskBadge } from "../ui/FeasibilityBadge";
-import { ResourceEstimateCard } from "../ui/ResourceEstimateCard";
-import {
-  Badge,
-  Button,
-  EmptyState,
-  ErrorState,
-  Panel,
-  SectionHeader,
-  Spinner,
-  StatTile,
-  WarningCallout,
-} from "../ui/primitives";
+import { AlertIcon, RefreshIcon } from "@/components/ui/icons";
+import { Badge, Button } from "../ui/primitives";
+import { resourceRiskForBudget } from "./simulatorModel";
 
 interface CircuitAnalysisPanelProps {
   analysis: CircuitAnalysis | null;
@@ -23,161 +13,164 @@ interface CircuitAnalysisPanelProps {
   onRetry: () => void;
 }
 
-export function CircuitAnalysisPanel({
-  analysis,
-  loading,
-  error,
-  engines,
-  runMemoryMb,
-  onRetry,
-}: CircuitAnalysisPanelProps) {
+const RISK_TONE = {
+  safe: "green",
+  heavy: "amber",
+  dangerous: "amber",
+  infeasible: "red",
+} as const;
+
+export function CircuitAnalysisPanel({ analysis, loading, error, engines, runMemoryMb, onRetry }: CircuitAnalysisPanelProps) {
   if (loading) {
     return (
-      <Panel className="p-5">
-        <SectionHeader
-          eyebrow="Feasibility analysis"
-          title="Inspecting circuit structure"
-          description="Counting operations, classifying Clifford compatibility, and estimating exact-memory cost."
-        />
-        <Spinner label="Analyzing the active circuit" />
-      </Panel>
+      <section aria-labelledby="fingerprint-heading" className="border-b border-lab-border bg-lab-surface/45 px-4 py-4 sm:px-5">
+        <div className="flex items-center gap-3" role="status" aria-live="polite">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-lab-borderStrong border-t-accent-cyan" aria-hidden="true" />
+          <div>
+            <h2 id="fingerprint-heading" className="text-xs font-semibold text-lab-text">Building circuit fingerprint</h2>
+            <p className="mt-0.5 text-[10px] text-lab-faint">Classifying operations, scheduling depth, and estimating exact memory.</p>
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-8" aria-hidden="true">
+          {Array.from({ length: 8 }, (_, index) => <span key={index} className="h-10 animate-pulse rounded-md bg-lab-raised/70" />)}
+        </div>
+      </section>
     );
   }
 
   if (error) {
     return (
-      <Panel className="p-5">
-        <SectionHeader eyebrow="Feasibility analysis" title="Analysis unavailable" />
-        <ErrorState
-          title="Could not analyze this circuit"
-          message={error}
-          action={<Button size="sm" variant="secondary" onClick={onRetry}>Retry analysis</Button>}
-        />
-      </Panel>
+      <section aria-labelledby="fingerprint-heading" className="border-b border-accent-red/30 bg-accent-red/[.035] px-4 py-4 sm:px-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 gap-3">
+            <AlertIcon className="mt-0.5 h-4 w-4 shrink-0 text-accent-red" />
+            <div>
+              <h2 id="fingerprint-heading" className="text-xs font-semibold text-red-100">Circuit analysis unavailable</h2>
+              <p className="mt-1 text-[11px] leading-4 text-red-100/75">{error}</p>
+            </div>
+          </div>
+          <Button size="sm" variant="secondary" onClick={onRetry}><RefreshIcon className="h-3.5 w-3.5" /> Retry</Button>
+        </div>
+      </section>
     );
   }
 
   if (!analysis) {
     return (
-      <Panel className="p-5">
-        <SectionHeader eyebrow="Feasibility analysis" title="Circuit analysis" />
-        <EmptyState
-          title="No feasibility report yet"
-          description="Load a circuit or request analysis to see engine recommendations and exact-memory estimates."
-          action={<Button size="sm" variant="secondary" onClick={onRetry}>Analyze circuit</Button>}
-        />
-      </Panel>
+      <section aria-labelledby="fingerprint-heading" className="border-b border-lab-border bg-lab-surface/35 px-4 py-4 sm:px-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 id="fingerprint-heading" className="text-xs font-semibold text-lab-text">No circuit fingerprint</h2>
+            <p className="mt-1 text-[10px] text-lab-faint">Analysis is required before engine compatibility can be authoritative.</p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={onRetry}>Analyze</Button>
+        </div>
+      </section>
     );
   }
 
-  const recommended = analysis.recommended_engines.map((engineId) => ({
-    id: engineId,
-    info: engines?.engines.find((entry) => entry.id === engineId),
-  }));
-  const mpsCandidate = analysis.recommended_engines.includes("aer_mps");
-  const hardwareCandidate = analysis.feasibility_status === "approximation_or_hardware";
-  const uniqueReasons = [...new Set(analysis.non_clifford_reasons)].slice(0, 8);
-  const gateCounts = Object.entries(analysis.gate_counts).sort((a, b) => b[1] - a[1]);
+  const gateCounts = Object.entries(analysis.gate_counts).sort((left, right) => right[1] - left[1]);
+  const runStatevectorRisk = resourceRiskForBudget(analysis.resource_estimate.statevector_log2_bytes, runMemoryMb);
+  const runDensityRisk = resourceRiskForBudget(analysis.resource_estimate.density_matrix_log2_bytes, runMemoryMb);
+  const recommended = analysis.recommended_engines.map((id) => {
+    const info = engines?.engines.find((entry) => entry.id === id);
+    return { id, available: info?.available ?? null };
+  });
+  const metrics = [
+    ["Qubits", analysis.num_qubits],
+    ["Classical", analysis.num_clbits],
+    ["Operations", analysis.operation_count],
+    ["Depth", analysis.depth],
+    ["2-qubit", analysis.two_qubit_gate_count],
+    ["Measure", analysis.measurement_count],
+    ["T count", analysis.t_count],
+    ["Rotations", analysis.rotation_count],
+  ] as const;
 
   return (
-    <Panel className="p-5">
-      <SectionHeader
-        eyebrow="Feasibility analysis"
-        title="Circuit viability"
-        description={
-          <>
-            Structural analysis uses a fixed <span className="font-mono text-lab-text">{formatInteger(analysis.resource_estimate.max_memory_mb)} MB</span> baseline.
-            Your configured run budget is <span className="font-mono text-accent-cyan">{formatInteger(runMemoryMb)} MB</span>.
-          </>
-        }
-        right={
-          <div className="flex flex-wrap items-center gap-2">
-            <FeasibilityBadge status={analysis.feasibility_status} />
-            <CliffordBadge isClifford={analysis.is_clifford} />
+    <section aria-labelledby="fingerprint-heading" className="border-b border-lab-border bg-lab-surface/45">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3 sm:px-5">
+        <div>
+          <p className="instrument-label">Circuit fingerprint</p>
+          <h2 id="fingerprint-heading" className="mt-1 text-xs font-semibold text-lab-text">
+            {analysis.is_clifford ? "Clifford-compatible structure" : "Universal / non-Clifford structure"}
+          </h2>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone={analysis.is_clifford ? "green" : "violet"}>{analysis.is_clifford ? "stabilizer candidate" : "non-Clifford"}</Badge>
+          <Badge tone={analysis.feasibility_status === "approximation_or_hardware" ? "red" : analysis.feasibility_status === "exact_borderline" ? "amber" : "green"}>
+            {analysis.feasibility_status.replaceAll("_", " ")}
+          </Badge>
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-4 border-y border-lab-border sm:grid-cols-8">
+        {metrics.map(([label, value], index) => (
+          <div key={label} className={`min-w-0 border-l border-lab-border px-2 py-2.5 first:border-l-0 ${index >= 4 ? "border-t sm:border-t-0" : ""}`}>
+            <dt className="truncate font-display text-[8px] font-semibold uppercase tracking-[.14em] text-lab-faint">{label}</dt>
+            <dd className="mt-1 truncate font-mono text-xs font-semibold tabular-nums text-lab-text">{formatInteger(value)}</dd>
           </div>
-        }
-      />
+        ))}
+      </dl>
 
-      <div className="mb-4 flex flex-wrap gap-2" aria-label="Circuit method candidates">
-        <RiskBadge risk={analysis.statevector_risk} prefix="Statevector" />
-        <RiskBadge risk={analysis.density_matrix_risk} prefix="Density" />
-        {analysis.is_clifford && <Badge tone="green">Stabilizer candidate</Badge>}
-        {mpsCandidate && <Badge tone="amber">MPS candidate</Badge>}
-        {hardwareCandidate && <Badge tone="red">Real hardware candidate</Badge>}
+      <div className="grid gap-px bg-lab-border sm:grid-cols-2">
+        <div className="bg-lab-surface px-4 py-3 sm:px-5">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="instrument-label">Exact statevector</p>
+              <p className="mt-1 font-mono text-xs font-semibold text-accent-cyan">{analysis.estimated_statevector_memory_human}</p>
+            </div>
+            <Badge tone={RISK_TONE[runStatevectorRisk]}>run budget: {runStatevectorRisk}</Badge>
+          </div>
+          <p className="mt-1 text-[10px] text-lab-faint">16 × 2ⁿ bytes · evaluated against {formatInteger(runMemoryMb)} MB</p>
+        </div>
+        <div className="bg-lab-surface px-4 py-3 sm:px-5">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="instrument-label">Density matrix</p>
+              <p className="mt-1 font-mono text-xs font-semibold text-lab-text">{analysis.estimated_density_matrix_memory_human}</p>
+            </div>
+            <Badge tone={RISK_TONE[runDensityRisk]}>run budget: {runDensityRisk}</Badge>
+          </div>
+          <p className="mt-1 text-[10px] text-lab-faint">16 × 4ⁿ bytes · appropriate only for small noisy workloads</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Qubits" value={formatInteger(analysis.num_qubits)} />
-        <StatTile label="Classical bits" value={formatInteger(analysis.num_clbits)} />
-        <StatTile label="Depth estimate" value={formatInteger(analysis.depth)} />
-        <StatTile label="Operations" value={formatInteger(analysis.operation_count)} />
-        <StatTile label="Two-qubit gates" value={formatInteger(analysis.two_qubit_gate_count)} />
-        <StatTile label="Measurements" value={formatInteger(analysis.measurement_count)} />
-        <StatTile label="T count" value={formatInteger(analysis.t_count)} tone={analysis.t_count > 0 ? "violet" : "slate"} />
-        <StatTile label="Rotations" value={formatInteger(analysis.rotation_count)} tone={analysis.rotation_count > 0 ? "violet" : "slate"} />
-      </div>
-
-      <div className="mt-4">
-        <ResourceEstimateCard analysis={analysis} />
-        <p className="mt-2 text-[11px] leading-4 text-lab-faint">
-          Analyzer classifications above use the 1,024 MB endpoint baseline. The run response below recalculates resource risk against the selected run budget.
-        </p>
-      </div>
-
-      <div className="mt-5 grid gap-4 lg:grid-cols-2">
-        <div className="rounded-lg border border-lab-border bg-lab-raised/35 p-4">
-          <p className="instrument-label">Recommended engines</p>
-          {recommended.length === 0 ? (
-            <p className="mt-2 text-xs leading-5 text-accent-red">No engine is recommended under the analyzer baseline. Review the warnings and consider fewer qubits, a structured circuit, MPS where appropriate, or external real hardware.</p>
-          ) : (
-            <div className="mt-2 space-y-2">
-              {recommended.map(({ id, info }) => (
-                <div key={id} className="flex items-center justify-between gap-3 rounded-md border border-lab-border bg-lab-bg/55 px-3 py-2">
-                  <span className="min-w-0 truncate font-mono text-[11px] font-semibold text-lab-text" title={id}>
-                    {formatEngineName(id)}
-                  </span>
-                  {!engines ? (
-                    <Badge tone="neutral">availability unknown</Badge>
-                  ) : info?.available ? (
-                    <Badge tone="green" dot>available</Badge>
-                  ) : (
-                    <Badge tone="red" title={info?.unavailable_reason ?? "Not listed by backend"}>unavailable</Badge>
-                  )}
+      <details className="group px-4 py-3 sm:px-5">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[11px] font-semibold text-lab-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan">
+          <span>Gate evidence, recommendations, and analyzer warnings</span>
+          <span className="font-mono text-[10px] text-lab-faint group-open:hidden">expand</span>
+          <span className="hidden font-mono text-[10px] text-lab-faint group-open:inline">collapse</span>
+        </summary>
+        <div className="mt-3 grid gap-4 lg:grid-cols-[1fr_1fr_1.25fr]">
+          <div>
+            <p className="instrument-label">Gate profile</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {gateCounts.length === 0 && <Badge tone="neutral">empty circuit</Badge>}
+              {gateCounts.map(([gate, count]) => <Badge key={gate} tone="neutral"><span className="font-mono">{gate.toUpperCase()} {formatInteger(count)}</span></Badge>)}
+            </div>
+          </div>
+          <div>
+            <p className="instrument-label">Analyzer recommendations</p>
+            <div className="mt-2 space-y-1.5">
+              {recommended.length === 0 && <p className="text-[10px] leading-4 text-accent-red">No classical engine is recommended under the analyzer baseline.</p>}
+              {recommended.map(({ id, available }) => (
+                <div key={id} className="flex items-center justify-between gap-2 text-[10px]">
+                  <span className="font-mono text-lab-muted">{formatEngineName(id)}</span>
+                  <span className={available === false ? "text-accent-red" : available === true ? "text-accent-green" : "text-lab-faint"}>{available === false ? "unavailable" : available === true ? "available" : "catalog pending"}</span>
                 </div>
               ))}
             </div>
-          )}
-          <p className="mt-3 text-[11px] leading-4 text-lab-faint">
-            Recommendations describe method fit. Availability is cross-checked separately against the live backend engine catalog.
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-lab-border bg-lab-raised/35 p-4">
-          <p className="instrument-label">Gate profile</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {gateCounts.length === 0 && <Badge tone="neutral">empty circuit</Badge>}
-            {gateCounts.map(([gate, count]) => (
-              <span key={gate} className="rounded-md border border-lab-border bg-lab-bg px-2 py-1 font-mono text-[11px] text-lab-muted">
-                {gate.toUpperCase()} <span className="text-lab-text">{formatInteger(count)}</span>
-              </span>
-            ))}
           </div>
-          {uniqueReasons.length > 0 && (
-            <div className="mt-3 border-t border-lab-border pt-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-quantum-400">Non-Clifford evidence</p>
-              <ul className="mt-1.5 space-y-1 text-[11px] leading-4 text-lab-muted">
-                {uniqueReasons.map((reason) => <li key={reason}>• {reason}</li>)}
-              </ul>
-            </div>
-          )}
+          <div>
+            <p className="instrument-label">Evidence and warnings</p>
+            <ul className="mt-2 space-y-1 text-[10px] leading-4 text-lab-muted">
+              {[...new Set([...analysis.non_clifford_reasons, ...analysis.warnings])].slice(0, 12).map((item) => <li key={item}>• {item}</li>)}
+              {analysis.non_clifford_reasons.length === 0 && analysis.warnings.length === 0 && <li className="text-lab-faint">No additional analyzer warnings.</li>}
+            </ul>
+          </div>
         </div>
-      </div>
-
-      {analysis.warnings.length > 0 && (
-        <div className="mt-4 space-y-2">
-          {analysis.warnings.map((warning) => <WarningCallout key={warning}>{warning}</WarningCallout>)}
-        </div>
-      )}
-    </Panel>
+      </details>
+    </section>
   );
 }

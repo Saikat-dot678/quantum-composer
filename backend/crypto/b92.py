@@ -86,8 +86,10 @@ def simulate_b92(
         "are logically impossible for one of the states are conclusive. Here "
         f"{conclusive_count} of {num_bits} measurements were conclusive, forming the "
         f"sifted key with QBER {qber:.3f}. Roughly a quarter of transmissions are "
-        "conclusive in the ideal case; channel noise both lowers the conclusive "
-        "rate and raises the error rate."
+        "conclusive in the ideal case. In this simple symmetric bit-flip model, "
+        "noise can turn inconclusive outcomes into conclusive ones or vice versa, "
+        "so the conclusive rate is not itself a monotonic noise indicator; QBER "
+        "captures disagreements in the retained positions."
     )
 
     charts_data = {

@@ -93,7 +93,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Build
         run: npm run build
-      # Backend-independent: the suite asserts the shell renders honestly even
-      # when the FastAPI backend is unreachable.
-      - name: Run smoke suite
-        run: npm run test:e2e
+      # Backend-independent: the suites assert the workbench renders honestly
+      # even when the FastAPI backend is unreachable. Visual snapshots are
+      # skipped in CI (baselines are platform-specific).
+      - name: Run smoke + accessibility suites
+        run: npx playwright test e2e/smoke.spec.ts e2e/a11y.spec.ts

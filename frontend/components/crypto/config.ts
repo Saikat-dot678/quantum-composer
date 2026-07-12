@@ -3,6 +3,7 @@ export type Protocol = "bb84" | "e91" | "b92" | "qrng";
 export interface ProtocolDefinition {
   id: Protocol;
   name: string;
+  shortLabel: string;
   subtitle: string;
   summary: string;
   teaches: string;
@@ -14,40 +15,48 @@ export const PROTOCOLS: ProtocolDefinition[] = [
   {
     id: "bb84",
     name: "BB84",
-    subtitle: "Prepare-and-measure QKD · 1984",
-    summary: "Alice encodes random bits in Z or X bases. Bob measures independently, then both parties keep only matching bases.",
-    teaches: "Basis reconciliation, key sifting, QBER, privacy amplification, and intercept-resend disturbance.",
-    securityNote: "An elevated QBER means this educational channel is disturbed or insecure. It is not proof that a particular eavesdropper exists.",
-    steps: ["Alice prepares", "Quantum channel", "Bob measures", "Sift + estimate QBER"],
+    shortLabel: "Prepare + measure",
+    subtitle: "Basis sifting · 1984",
+    summary: "Follow each prepared state from Alice through a noisy channel to Bob, then reconcile bases and estimate QBER.",
+    teaches: "State preparation, basis reconciliation, key sifting, QBER, and intercept–resend disturbance.",
+    securityNote: "Elevated QBER indicates a disturbed or unsuitable modeled channel. It does not identify a particular eavesdropper.",
+    steps: ["Prepare states", "Transmit qubits", "Measure", "Reconcile bases"],
   },
   {
     id: "e91",
     name: "E91",
-    subtitle: "Entanglement + CHSH · 1991",
-    summary: "Alice and Bob measure simulated singlet pairs at independent angles; matching settings form a key and other settings estimate CHSH correlations.",
-    teaches: "Entanglement correlations, the CHSH classical bound, finite-sample variation, QBER, and attack disturbance.",
-    securityNote: "The displayed CHSH value is a protocol-level simulated indicator. It does not certify a physical source, channel, or device.",
-    steps: ["Pair source", "Choose angles", "Measure pairs", "CHSH + key sift"],
+    shortLabel: "Entangled pairs",
+    subtitle: "CHSH correlations · 1991",
+    summary: "Route simulated singlet pairs to independently chosen analyzers, sift matched angles, and inspect a finite-sample CHSH indicator.",
+    teaches: "Entanglement correlations, angle selection, the CHSH classical bound, finite-sample variation, and QBER.",
+    securityNote: "A software-model CHSH value cannot certify a physical source, detectors, channel, or device independence.",
+    steps: ["Emit singlet pairs", "Choose analyzers", "Measure pairs", "Test + sift"],
   },
   {
     id: "b92",
     name: "B92",
-    subtitle: "Two non-orthogonal states · 1992",
-    summary: "Alice uses only |0⟩ and |+⟩. Bob keeps outcomes that rule out one state and discards inconclusive measurements.",
-    teaches: "Non-orthogonal encoding, conclusive measurements, sifting efficiency, and channel-error effects.",
-    securityNote: "This model illustrates protocol statistics only; it is not a complete security proof or production key-distribution system.",
-    steps: ["Alice prepares", "Two-state channel", "Bob tests", "Keep conclusive bits"],
+    shortLabel: "Two-state channel",
+    subtitle: "Conclusive outcomes · 1992",
+    summary: "Trace two non-orthogonal states and keep only Bob’s measurements that logically rule out one preparation.",
+    teaches: "Non-orthogonal encoding, conclusive measurements, sifting efficiency, and retained-bit errors.",
+    securityNote: "This protocol-level statistics model is not a complete security proof or a deployable key-distribution implementation.",
+    steps: ["Encode |0⟩ or |+⟩", "Transmit state", "Test in Z or X", "Keep conclusions"],
   },
   {
     id: "qrng",
     name: "QRNG",
-    subtitle: "Hadamard measurement · educational",
-    summary: "Each sample models preparing H|0⟩ and measuring it to obtain an ideally balanced classical bit.",
-    teaches: "Finite-sample 0/1 distributions and a simple bias diagnostic.",
-    securityNote: "This simulator uses a seeded pseudo-random generator for reproducibility. It is not certified hardware randomness or a source of cryptographic entropy.",
-    steps: ["Prepare |0⟩", "Apply H", "Measure", "Inspect distribution"],
+    shortLabel: "Sample measurements",
+    subtitle: "Hadamard model · educational",
+    summary: "Inspect a reproducible sample from the idealized H|0⟩ measurement workflow and compare it with a 50/50 distribution.",
+    teaches: "Finite-sample bit distributions, observed bias, and the difference between a model and certified entropy.",
+    securityNote: "The backend uses a pseudo-random generator, optionally seeded. These bits are not certified quantum entropy or cryptographic key material.",
+    steps: ["Prepare |0⟩", "Apply Hadamard", "Measure", "Audit distribution"],
   },
 ];
+
+export function isProtocol(value: unknown): value is Protocol {
+  return typeof value === "string" && PROTOCOLS.some((item) => item.id === value);
+}
 
 export function getProtocolDefinition(protocol: Protocol): ProtocolDefinition {
   return PROTOCOLS.find((item) => item.id === protocol) ?? PROTOCOLS[0];

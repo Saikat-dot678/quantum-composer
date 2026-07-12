@@ -12,6 +12,7 @@ import { ROTATION_GATES, TWO_QUBIT_GATES } from "@/lib/types";
 import type { CircuitData, CircuitOperation, GateName, Preset } from "@/lib/types";
 import { CodePanel } from "@/components/output/CodePanel";
 import { ResultsPanel, type ResultView } from "@/components/output/ResultsPanel";
+import { useRegisterActions } from "@/components/workspace/ActionRegistry";
 import { CircuitSettings } from "./CircuitSettings";
 import { CircuitWorkspace } from "./CircuitWorkspace";
 import { StatePreviewPanel } from "./StatePreviewPanel";
@@ -254,6 +255,14 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab }: Props)
   }
 
   const openSimulatorLab = () => onOpenSimulatorLab(sortedCircuit);
+
+  // Contribute Composer actions to the global command palette while mounted.
+  const working = busyAction !== null;
+  useRegisterActions("composer", [
+    { id: "composer-run", group: "Composer", label: "Run current circuit", hint: simulationPath.id.toUpperCase(), disabled: working, run: () => void run() },
+    { id: "composer-analyze", group: "Composer", label: "Analyze feasibility", hint: "backend analyzer", disabled: working, run: () => void analyze() },
+    { id: "composer-generate", group: "Composer", label: "Generate Qiskit / QASM outputs", disabled: working, run: () => void generate() },
+  ]);
 
   return (
     <div className="mx-auto min-w-0 max-w-[1800px] px-4 py-5 sm:px-5 lg:px-8 lg:py-6">

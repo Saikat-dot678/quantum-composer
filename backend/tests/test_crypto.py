@@ -102,3 +102,26 @@ def test_bb84_high_error_yields_no_secure_key():
     # A very noisy / eavesdropped channel should distil no secure key.
     body = simulate_bb84(num_bits=400, eve_enabled=True, channel_error_rate=0.2, seed=2)
     assert body["final_key_length"] == 0
+
+
+def test_bb84_copy_does_not_claim_error_reconciliation():
+    body = simulate_bb84(num_bits=256, eve_enabled=False, channel_error_rate=0.02, seed=12)
+    assert "does not implement" in body["explanation"]
+    assert "not a proven shared final key" in body["explanation"]
+    assert "does not perform error reconciliation" in body["privacy_amplification"]["explanation"]
+
+
+def test_protocol_explanations_preserve_educational_boundaries():
+    b92 = client.post(
+        "/crypto/b92/simulate",
+        json={"num_bits": 256, "channel_error_rate": 0.2, "seed": 4},
+    ).json()
+    assert "not itself a monotonic noise indicator" in b92["explanation"]
+    assert "lowers the conclusive rate" not in b92["explanation"]
+
+    e91 = client.post(
+        "/crypto/e91/simulate",
+        json={"num_pairs": 512, "eve_enabled": False, "seed": 4},
+    ).json()
+    assert "software-model indicator" in e91["explanation"]
+    assert "certifies genuine entanglement" not in e91["explanation"]

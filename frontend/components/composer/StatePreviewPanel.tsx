@@ -1,42 +1,45 @@
 "use client";
 
+// Live state preview: computes the ideal pre-measurement state locally for
+// small circuits and renders basis probabilities with phases, an interactive
+// Bloch sphere for one qubit (lazy-loaded), and an honest entanglement hint
+// for two qubits. Above the preview bound it teaches the exponential wall
+// instead of rendering.
+import dynamic from "next/dynamic";
 import { useMemo } from "react";
-import { Badge } from "@/components/ui/primitives";
-import { computeStatePreview, MAX_PREVIEW_QUBITS } from "@/lib/statevector";
+import { Badge, Spinner } from "@/components/ui/primitives";
+import { computeStatePreview, MAX_PREVIEW_QUBITS, type StatePreview } from "@/lib/statevector";
 import type { CircuitData } from "@/lib/types";
+
+const BlochSphere3D = dynamic(() => import("./BlochSphere3D"), {
+  ssr: false,
+  loading: () => <Spinner label="Loading Bloch sphere" />,
+});
 
 const RAD_TO_DEG = 180 / Math.PI;
 const SHOWN_STATES = 6;
 
-/** Small X–Z plane projection of the 1-qubit Bloch vector (no dependency). */
-function BlochProjection({ x, y, z }: { x: number; y: number; z: number }) {
-  const cx = 44;
-  const cy = 44;
-  const r = 36;
-  const tipX = cx + x * r;
-  const tipY = cy - z * r;
-  return (
-    <div className="flex items-center gap-3">
-      <svg viewBox="0 0 88 88" className="h-20 w-20 shrink-0" role="img" aria-label={`Bloch vector projection: x ${x.toFixed(2)}, y ${y.toFixed(2)}, z ${z.toFixed(2)}`}>
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#2a3c4e" strokeWidth="1" />
-        <line x1={cx - r} y1={cy} x2={cx + r} y2={cy} stroke="#1b2937" strokeWidth="1" />
-        <line x1={cx} y1={cy - r} x2={cx} y2={cy + r} stroke="#1b2937" strokeWidth="1" />
-        <text x={cx} y={cy - r + 9} textAnchor="middle" fill="#6f8092" fontSize="7" fontFamily="monospace">|0⟩</text>
-        <text x={cx} y={cy + r - 3} textAnchor="middle" fill="#6f8092" fontSize="7" fontFamily="monospace">|1⟩</text>
-        <line x1={cx} y1={cy} x2={tipX} y2={tipY} stroke="#22d3ee" strokeWidth="1.8" strokeLinecap="round" />
-        <circle cx={tipX} cy={tipY} r="2.6" fill="#22d3ee" />
-      </svg>
-      <dl className="space-y-0.5 font-mono text-[11px] text-lab-muted">
-        <div className="flex gap-2"><dt className="w-7 text-lab-faint">⟨X⟩</dt><dd className="tabular-nums text-lab-text">{x.toFixed(3)}</dd></div>
-        <div className="flex gap-2"><dt className="w-7 text-lab-faint">⟨Y⟩</dt><dd className="tabular-nums text-lab-text">{y.toFixed(3)}</dd></div>
-        <div className="flex gap-2"><dt className="w-7 text-lab-faint">⟨Z⟩</dt><dd className="tabular-nums text-lab-text">{z.toFixed(3)}</dd></div>
-      </dl>
-    </div>
-  );
+// Concurrence of a pure 2-qubit state |ψ⟩ = a|00⟩ + b|01⟩ + c|10⟩ + d|11⟩:
+// C = 2·|ad − bc|. C = 0 → product state; C = 1 → maximally entangled.
+function concurrence(preview: StatePreview): number | null {
+  if (preview.numQubits !== 2 || preview.entries.length !== 4) return null;
+  const [a, b, c, d] = preview.entries;
+  const adRe = a.re * d.re - a.im * d.im;
+  const adIm = a.re * d.im + a.im * d.re;
+  const bcRe = b.re * c.re - b.im * c.im;
+  const bcIm = b.re * c.im + b.im * c.re;
+  return 2 * Math.hypot(adRe - bcRe, adIm - bcIm);
+}
+
+function entanglementHint(value: number): { tone: "violet" | "green" | "neutral"; label: string; note: string } {
+  if (value > 0.98) return { tone: "violet", label: `maximally entangled · C ≈ ${value.toFixed(2)}`, note: "No single-qubit description exists for either qubit — that is why there is no Bloch sphere here." };
+  if (value > 0.05) return { tone: "violet", label: `entangled · C ≈ ${value.toFixed(2)}`, note: "The two qubits are correlated beyond any product state (concurrence > 0)." };
+  return { tone: "green", label: "product state · C ≈ 0", note: "Each qubit could be described independently on its own Bloch sphere." };
 }
 
 export function StatePreviewPanel({ circuit }: { circuit: CircuitData }) {
   const preview = useMemo(() => computeStatePreview(circuit), [circuit]);
+  const entanglement = useMemo(() => (preview ? concurrence(preview) : null), [preview]);
 
   return (
     <section className="mt-5 border-t border-lab-border pt-4" aria-labelledby="state-preview-heading">
@@ -54,10 +57,32 @@ export function StatePreviewPanel({ circuit }: { circuit: CircuitData }) {
         <>
           {preview.bloch && (
             <div className="mt-3 rounded-lg border border-lab-border bg-lab-raised/40 p-3">
-              <p className="instrument-label mb-2">Bloch vector · X–Z projection</p>
-              <BlochProjection x={preview.bloch.x} y={preview.bloch.y} z={preview.bloch.z} />
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="instrument-label mb-2">Bloch sphere</p>
+                  <BlochSphere3D x={preview.bloch.x} y={preview.bloch.y} z={preview.bloch.z} />
+                </div>
+                <dl className="space-y-0.5 pt-6 font-mono text-[11px] text-lab-muted">
+                  <div className="flex gap-2"><dt className="w-8 text-lab-faint">⟨X⟩</dt><dd className="tabular-nums text-lab-text">{preview.bloch.x.toFixed(3)}</dd></div>
+                  <div className="flex gap-2"><dt className="w-8 text-lab-faint">⟨Y⟩</dt><dd className="tabular-nums text-lab-text">{preview.bloch.y.toFixed(3)}</dd></div>
+                  <div className="flex gap-2"><dt className="w-8 text-lab-faint">⟨Z⟩</dt><dd className="tabular-nums text-lab-text">{preview.bloch.z.toFixed(3)}</dd></div>
+                </dl>
+              </div>
             </div>
           )}
+
+          {entanglement !== null && (() => {
+            const hint = entanglementHint(entanglement);
+            return (
+              <div className="mt-3 rounded-lg border border-lab-border bg-lab-raised/40 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="instrument-label">Two-qubit correlation</p>
+                  <Badge tone={hint.tone}>{hint.label}</Badge>
+                </div>
+                <p className="mt-1.5 text-[11px] leading-4 text-lab-faint">{hint.note}</p>
+              </div>
+            );
+          })()}
 
           <ol className="mt-3 space-y-1.5" aria-label="Basis-state probabilities">
             {[...preview.entries]
@@ -71,7 +96,7 @@ export function StatePreviewPanel({ circuit }: { circuit: CircuitData }) {
                     <span className="absolute inset-y-0 left-0 rounded-sm bg-accent-cyan/80" style={{ width: `${entry.probability * 100}%` }} />
                   </span>
                   <span className="whitespace-nowrap text-right font-mono text-[10px] tabular-nums text-lab-faint">
-                    {(entry.probability * 100).toFixed(1)}% <span className="text-lab-faint/70">∠{(entry.phase * RAD_TO_DEG).toFixed(0)}°</span>
+                    {(entry.probability * 100).toFixed(1)}% <span className="text-lab-muted">∠{(entry.phase * RAD_TO_DEG).toFixed(0)}°</span>
                   </span>
                 </li>
               ))}
@@ -80,7 +105,6 @@ export function StatePreviewPanel({ circuit }: { circuit: CircuitData }) {
           <p className="mt-2 text-[10px] leading-4 text-lab-faint">
             Ideal pre-measurement state, computed locally as you edit.
             {preview.ignoredMeasurements > 0 && ` ${preview.ignoredMeasurements} measurement op${preview.ignoredMeasurements === 1 ? "" : "s"} ignored here — run the circuit for sampled counts.`}
-            {" "}Phase ∠ is relative to the |{"0".repeat(preview.numQubits)}⟩ amplitude convention.
           </p>
         </>
       )}

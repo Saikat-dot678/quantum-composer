@@ -17,13 +17,20 @@ from typing import Any
 from engines.base import (
     EngineNotAvailableError,
     EngineResult,
+    InfeasibleCircuitError,
     UnsupportedGateError,
-    format_counts_from_bits,
     stim_available,
 )
 from validators import ordered_operations
 
 ENGINE_ID = "stim_stabilizer"
+
+# Sampling cost depends on both register width and shots. The V2 schema permits
+# large values for each independently, so guard their product before asking Stim
+# for a potentially enormous sample matrix. This is an engine-specific execution
+# guard, not a change to the public request schema.
+MAX_SAMPLE_WORK_CELLS = 10_000_000
+MAX_SAMPLE_BATCH_CELLS = 1_000_000
 
 # Declarative gate -> Stim instruction name for the supported Clifford subset.
 _STIM_GATES = {
@@ -50,6 +57,18 @@ def _load_stim():
     return stim
 
 
+def _ensure_sampling_work_is_safe(shots: int, width: int) -> int:
+    work_cells = int(shots) * max(int(width), 1)
+    if work_cells > MAX_SAMPLE_WORK_CELLS:
+        raise InfeasibleCircuitError(
+            "Stim sampling request is too large for the synchronous API: "
+            f"{shots} shots x {width} output bits = {work_cells:,} sampled bit cells, "
+            f"above the {MAX_SAMPLE_WORK_CELLS:,} safety limit. Reduce shots or "
+            "register width."
+        )
+    return work_cells
+
+
 def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
     if not stim_available():
         raise EngineNotAvailableError(
@@ -62,6 +81,12 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             "Stim only simulates Clifford circuits, but this circuit contains: "
             f"{reasons}. Stim is not a universal simulator. Use the statevector or "
             "MPS engine for non-Clifford circuits."
+        )
+    if analysis.get("rotation_count", 0):
+        raise UnsupportedGateError(
+            "Stim's direct gate mapping does not accept RX, RY or RZ instructions, "
+            "even when an angle is Clifford-equivalent. Use the Aer stabilizer "
+            "engine for Clifford-angle rotations."
         )
 
     stim = _load_stim()
@@ -105,21 +130,30 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             "Stim engine requires at least one measurement or qubit to sample."
         )
 
+    work_cells = _ensure_sampling_work_is_safe(int(options.shots), width)
+
     try:
         sampler = circuit.compile_sampler(seed=options.seed)
     except TypeError:  # pragma: no cover - older stim without seed kwarg
         sampler = circuit.compile_sampler()
-    samples = sampler.sample(int(options.shots))
-
-    shots_bits: list[list[int]] = []
-    for shot in samples:
-        bits = [0] * max(width, 1)
-        for record_index, clbit in enumerate(measurement_clbits):
-            if clbit < width:
-                bits[clbit] = int(shot[record_index])
-        shots_bits.append(bits)
-
-    counts = format_counts_from_bits(shots_bits, width)
+    # Accumulate counts in bounded batches instead of materializing a Python
+    # list for every bit of every shot. Stim's compiled sampler keeps its RNG
+    # state across calls, so seeded sampling remains deterministic.
+    counts: dict[str, int] = {}
+    remaining = int(options.shots)
+    records_per_shot = max(len(measurement_clbits), 1)
+    batch_limit = max(1, MAX_SAMPLE_BATCH_CELLS // records_per_shot)
+    while remaining:
+        batch_size = min(remaining, batch_limit)
+        samples = sampler.sample(batch_size)
+        for shot in samples:
+            bits = bytearray(max(width, 1))
+            for record_index, clbit in enumerate(measurement_clbits):
+                if clbit < width:
+                    bits[clbit] = int(shot[record_index])
+            key = "".join("1" if bits[c] else "0" for c in range(width - 1, -1, -1))
+            counts[key] = counts.get(key, 0) + 1
+        remaining -= batch_size
 
     return EngineResult(
         counts=counts,
@@ -129,5 +163,9 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             "simulates it exactly and scales to very large qubit counts."
         ),
         warnings=warnings,
-        metadata={"method": "stim_stabilizer", "is_clifford": True},
+        metadata={
+            "method": "stim_stabilizer",
+            "is_clifford": True,
+            "sample_work_cells": work_cells,
+        },
     )

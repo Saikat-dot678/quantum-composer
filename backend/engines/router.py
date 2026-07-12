@@ -43,11 +43,15 @@ ENGINE_CATALOG: list[dict[str, Any]] = [
     {
         "id": "aer_mps",
         "name": "Aer matrix product state",
-        "description": "Approximate simulation of large low-entanglement circuits.",
+        "description": "Tensor-network simulation of large low-entanglement circuits.",
         "scales_to_large_structured_circuits": True,
         "optional_dependency": "qiskit-aer",
         "best_for": "Nearest-neighbour / low-entanglement circuits with many qubits.",
-        "limitations": "Bond dimension explodes for highly entangled circuits; results may be approximate.",
+        "limitations": (
+            "Bond dimension explodes for highly entangled circuits. Results can remain exact "
+            "when the required bonds are retained; truncation or restrictive bond limits can "
+            "make them approximate."
+        ),
     },
     {
         "id": "aer_stabilizer",
@@ -94,19 +98,25 @@ def available_engines() -> list[dict[str, Any]]:
     result = []
     for entry in ENGINE_CATALOG:
         dep = entry["optional_dependency"]
+        unavailable_reason: str | None = None
         if dep == "stim":
             available = has_stim
+            if not available:
+                unavailable_reason = "Optional dependency 'stim' is not installed."
         elif dep == "qiskit-aer":
             available = has_aer
+            if not available:
+                unavailable_reason = "Optional dependency 'qiskit-aer' is not installed."
         else:  # auto
             available = has_aer
+            if not available:
+                unavailable_reason = (
+                    "Qiskit Aer is not installed; Auto routing requires the "
+                    "'qiskit-aer' runtime dependency."
+                )
         item = dict(entry)
         item["available"] = available
-        item["unavailable_reason"] = (
-            None
-            if available
-            else f"Optional dependency '{dep}' is not installed."
-        )
+        item["unavailable_reason"] = unavailable_reason
         result.append(item)
     return result
 
@@ -117,9 +127,18 @@ def choose_engine(analysis: dict[str, Any], options: Any) -> tuple[str, str]:
     sv_risk = analysis["statevector_risk"]
     dm_risk = analysis["density_matrix_risk"]
     is_clifford = analysis["is_clifford"]
+    statevector_cap = aer_statevector.HARD_QUBIT_CAP
+    density_cap = aer_density.HARD_QUBIT_CAP
 
     # 1. Noise requested -> density matrix (small circuits only).
     if options.noise_enabled:
+        if n > density_cap:
+            raise InfeasibleCircuitError(
+                f"Density-matrix simulation is capped at {density_cap} qubits "
+                f"(this circuit has {n}). A density matrix needs "
+                f"{analysis['estimated_density_matrix_memory_human']} (16 * 4**n bytes). "
+                "Reduce the qubit count for noisy simulation."
+            )
         if dm_risk in {"safe", "heavy"}:
             return (
                 "aer_density_matrix",
@@ -134,7 +153,7 @@ def choose_engine(analysis: dict[str, Any], options: Any) -> tuple[str, str]:
         )
 
     # 2. Small enough for exact statevector -> richest output, any gate set.
-    if sv_risk == "safe":
+    if sv_risk == "safe" and n <= statevector_cap:
         return (
             "aer_statevector",
             f"{n} qubits is small enough for exact statevector simulation.",
@@ -142,11 +161,22 @@ def choose_engine(analysis: dict[str, Any], options: Any) -> tuple[str, str]:
 
     # 3. Clifford-only -> stabilizer (scales to very large qubit counts).
     if is_clifford:
-        if stim_available():
+        # Stim's direct instruction mapping intentionally excludes rotation
+        # gates, even when an angle is Clifford-equivalent. Aer can handle those
+        # validated Clifford rotations; do not auto-select an incompatible Stim
+        # route merely because the structural analyzer says "Clifford".
+        if stim_available() and analysis.get("rotation_count", 0) == 0:
             return (
                 "stim_stabilizer",
                 f"Circuit is Clifford-only on {n} qubits; Stim simulates it exactly "
                 "at large scale.",
+            )
+        if analysis.get("rotation_count", 0):
+            return (
+                "aer_stabilizer",
+                f"Circuit is Clifford-only on {n} qubits but contains Clifford-angle "
+                "rotations that Stim's direct mapping does not support; the Aer "
+                "stabilizer method is used.",
             )
         return (
             "aer_stabilizer",
@@ -155,7 +185,7 @@ def choose_engine(analysis: dict[str, Any], options: Any) -> tuple[str, str]:
         )
 
     # 4. Non-Clifford but statevector is still (heavily) feasible.
-    if sv_risk == "heavy":
+    if sv_risk == "heavy" and n <= statevector_cap:
         return (
             "aer_statevector",
             f"Non-Clifford circuit; exact statevector is memory-heavy but feasible "
@@ -171,11 +201,16 @@ def choose_engine(analysis: dict[str, Any], options: Any) -> tuple[str, str]:
         )
 
     # 6. Nothing safe -> reject with an honest explanation.
+    cap_note = (
+        f" Exact statevector execution is also hard-capped at {statevector_cap} qubits."
+        if n > statevector_cap
+        else ""
+    )
     raise InfeasibleCircuitError(
         f"This circuit likely requires exponential memory for exact classical "
         f"simulation: {n} non-Clifford qubits need "
-        f"{analysis['estimated_statevector_memory_human']} for a full statevector. "
-        "Try MPS with approximation (enable 'allow_approximation' for a "
+        f"{analysis['estimated_statevector_memory_human']} for a full statevector."
+        f"{cap_note} Try MPS with approximation (enable 'allow_approximation' for a "
         "low-entanglement circuit), reduce the qubit count or depth, use a "
         "Clifford/stabilizer-compatible circuit, or run on real quantum hardware."
     )

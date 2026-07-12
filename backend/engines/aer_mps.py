@@ -1,11 +1,12 @@
-"""Matrix Product State (MPS) engine -- approximate, low-entanglement circuits.
+"""Matrix Product State (MPS) engine -- low-entanglement tensor networks.
 
 MPS represents the state as a chain of tensors linked by "bonds". For circuits
 with low entanglement the bond dimension stays small and simulation is cheap
 even for hundreds of qubits. For highly entangled circuits the bond dimension
 grows exponentially and MPS becomes as expensive as (or worse than) exact
-simulation, or must truncate and return an approximate answer. This engine is
-therefore honest about being approximate.
+simulation, or must truncate and return an approximate answer. MPS can remain
+exact when the required bond dimension is retained; method selection alone does
+not prove whether a particular completed run discarded information.
 """
 
 from __future__ import annotations
@@ -30,11 +31,20 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             options.mps_truncation_threshold
         )
 
+    truncation_configured = (
+        options.mps_max_bond_dimension is not None
+        or options.mps_truncation_threshold is not None
+    )
     warnings = [
-        "MPS simulation is exact only for low-entanglement circuits. For highly "
-        "entangled circuits the bond dimension can blow up (slow) or truncation "
-        "makes results approximate.",
+        "MPS can remain exact when it retains the required bond dimension. For "
+        "highly entangled circuits that dimension can grow exponentially; "
+        "truncation or a restrictive bond cap can make results approximate."
     ]
+    if truncation_configured:
+        warnings.append(
+            "An MPS bond limit or truncation threshold is configured. This may "
+            "discard information, so exactness is not guaranteed."
+        )
     if analysis["two_qubit_gate_count"] and num_qubits >= 20:
         warnings.append(
             f"Circuit has {analysis['two_qubit_gate_count']} two-qubit gates on "
@@ -62,7 +72,15 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
         warnings=warnings,
         metadata={
             "method": "matrix_product_state",
-            "approximate": True,
+            # Backward-compatible UI hint: true means the caller configured a
+            # truncation/bond constraint, not that discarded weight was measured.
+            "approximate": truncation_configured,
+            "approximation_possible": True,
+            "truncation_configured": truncation_configured,
+            "exactness_note": (
+                "Exactness depends on retaining the required bond dimension; "
+                "this API does not report discarded weight."
+            ),
             "mps_max_bond_dimension": options.mps_max_bond_dimension,
             "mps_truncation_threshold": options.mps_truncation_threshold,
         },

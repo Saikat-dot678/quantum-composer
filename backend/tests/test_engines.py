@@ -1,9 +1,17 @@
 """Tests for the engine router and individual simulation engines."""
 
+import math
+
+import pytest
+
 from fastapi.testclient import TestClient
 
-from engines.base import stim_available
+from analysis.circuit_analyzer import analyze_circuit
+from engines import aer_mps, router
+from engines.base import InfeasibleCircuitError, stim_available
+from engines.stim_stabilizer import _ensure_sampling_work_is_safe
 from main import app
+from schemas import CircuitOperation, SimulationOptions
 
 client = TestClient(app)
 
@@ -85,7 +93,9 @@ def test_mps_route_runs_for_chain_circuit():
     assert response.status_code == 200
     body = response.json()
     assert body["selected_engine"] == "aer_mps"
-    assert body["metadata"]["approximate"] is True
+    assert body["metadata"]["approximate"] is False
+    assert body["metadata"]["approximation_possible"] is True
+    assert "bond dimension" in body["metadata"]["exactness_note"]
 
 
 def test_stabilizer_engine_rejects_non_clifford_gate():
@@ -149,3 +159,100 @@ def test_seed_makes_simulation_reproducible():
     a = _simulate(circuit, engine="aer_statevector", shots=256, seed=99).json()
     b = _simulate(circuit, engine="aer_statevector", shots=256, seed=99).json()
     assert a["counts"] == b["counts"]
+
+
+def test_auto_avoids_stim_for_clifford_angle_rotation(monkeypatch):
+    analysis = analyze_circuit(
+        num_qubits=50,
+        num_clbits=0,
+        operations=[
+            CircuitOperation(gate="rz", qubits=[0], params={"theta": math.pi / 2})
+        ],
+        max_memory_mb=1024,
+        stim_available=True,
+    )
+    monkeypatch.setattr(router, "stim_available", lambda: True)
+    engine, reason = router.choose_engine(analysis, SimulationOptions())
+    assert engine == "aer_stabilizer"
+    assert "rotations" in reason
+
+
+def test_aer_stabilizer_runs_clifford_angle_rotation():
+    circuit = {
+        "num_qubits": 2,
+        "num_clbits": 0,
+        "shots": 32,
+        "operations": [
+            {"gate": "rz", "qubits": [0], "params": {"theta": math.pi / 2}, "moment": 0}
+        ],
+    }
+    response = _simulate(circuit, engine="aer_stabilizer", shots=32, seed=7)
+    assert response.status_code == 200
+    assert response.json()["selected_engine"] == "aer_stabilizer"
+
+
+def test_auto_uses_mps_past_statevector_hard_cap_when_allowed():
+    analysis = analyze_circuit(
+        num_qubits=31,
+        num_clbits=0,
+        operations=[CircuitOperation(gate="t", qubits=[0])],
+        max_memory_mb=65_536,
+    )
+    options = SimulationOptions(max_memory_mb=65_536, allow_approximation=True)
+    engine, _ = router.choose_engine(analysis, options)
+    assert analysis["statevector_risk"] == "heavy"
+    assert engine == "aer_mps"
+
+
+def test_auto_honors_density_matrix_hard_cap():
+    analysis = analyze_circuit(
+        num_qubits=16,
+        num_clbits=0,
+        operations=[],
+        max_memory_mb=65_536,
+    )
+    options = SimulationOptions(max_memory_mb=65_536, noise_enabled=True)
+    with pytest.raises(InfeasibleCircuitError, match="capped at 15 qubits"):
+        router.choose_engine(analysis, options)
+
+
+def test_noise_model_type_is_a_closed_contract():
+    response = _simulate(
+        _ghz(2),
+        engine="auto",
+        noise_enabled=True,
+        noise_model_type="typo-model",
+    )
+    assert response.status_code == 422
+
+
+def test_mps_metadata_marks_configured_truncation_without_claiming_measured_loss(monkeypatch):
+    monkeypatch.setattr(aer_mps, "run_aer", lambda *args, **kwargs: ({"0": 8}, []))
+    options = SimulationOptions(
+        engine="aer_mps",
+        shots=8,
+        mps_max_bond_dimension=4,
+    )
+    result = aer_mps.run(
+        request=object(),
+        options=options,
+        analysis={"num_qubits": 4, "two_qubit_gate_count": 2},
+    )
+    assert result.metadata["approximate"] is True
+    assert result.metadata["truncation_configured"] is True
+    assert "does not report discarded weight" in result.metadata["exactness_note"]
+
+
+def test_engine_catalog_has_actionable_auto_dependency_copy(monkeypatch):
+    monkeypatch.setattr(router, "aer_available", lambda: False)
+    monkeypatch.setattr(router, "stim_available", lambda: False)
+    catalog = {entry["id"]: entry for entry in router.available_engines()}
+    assert catalog["auto"]["available"] is False
+    assert "Qiskit Aer" in catalog["auto"]["unavailable_reason"]
+    assert "'None'" not in catalog["auto"]["unavailable_reason"]
+
+
+def test_stim_sampling_work_guard_rejects_pathological_product():
+    assert _ensure_sampling_work_is_safe(1024, 4096) == 4_194_304
+    with pytest.raises(InfeasibleCircuitError, match="sampled bit cells"):
+        _ensure_sampling_work_is_safe(1_000_000, 4096)

@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from main import app
+from main import app, configured_cors_origins
 
 
 client = TestClient(app)
@@ -59,3 +59,24 @@ def test_simulates_bell_state() -> None:
     payload = response.json()
     assert set(payload["counts"]).issubset({"00", "11"})
     assert sum(payload["counts"].values()) == 512
+
+
+def test_cors_allows_playwright_production_server_origin() -> None:
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": "http://127.0.0.1:3130",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:3130"
+
+
+def test_cors_configuration_appends_and_normalizes_origins() -> None:
+    origins = configured_cors_origins(
+        "https://composer.example, https://composer.example/,http://localhost:3000"
+    )
+    assert "http://localhost:3000" in origins
+    assert "http://127.0.0.1:3130" in origins
+    assert origins.count("https://composer.example") == 1

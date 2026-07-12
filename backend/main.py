@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -37,6 +38,31 @@ from schemas import (
 from simulator import simulate
 
 
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3130",
+    "http://127.0.0.1:3130",
+)
+
+
+def configured_cors_origins(raw: str | None = None) -> list[str]:
+    """Return safe local defaults plus comma-separated deployment origins.
+
+    ``QUANTUM_COMPOSER_CORS_ORIGINS`` is server-controlled configuration, not
+    request input. Defaults remain enabled so local development and the
+    production-server Playwright port work without environment setup.
+    """
+    configured = os.getenv("QUANTUM_COMPOSER_CORS_ORIGINS", "") if raw is None else raw
+    candidates = [*DEFAULT_CORS_ORIGINS, *(part.strip() for part in configured.split(","))]
+    origins: list[str] = []
+    for candidate in candidates:
+        normalized = candidate.rstrip("/")
+        if normalized and normalized not in origins:
+            origins.append(normalized)
+    return origins
+
+
 app = FastAPI(
     title="Quantum Composer API",
     description=(
@@ -52,7 +78,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=configured_cors_origins(),
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],

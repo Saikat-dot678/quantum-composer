@@ -165,7 +165,7 @@ class SimulationOptions(BaseModel):
     engine: SimulationEngine = SimulationEngine.AUTO
     shots: int = Field(default=1024, ge=1, le=1_000_000)
     noise_enabled: bool = False
-    noise_model_type: str = Field(default="depolarizing")
+    noise_model_type: Literal["depolarizing", "light", "heavy"] = "depolarizing"
     # Memory budget the router/estimator use to judge feasibility. Capped at 64 GB
     # so a stray large value cannot invite an out-of-memory statevector attempt;
     # engines also enforce absolute hard qubit caps for exact methods.

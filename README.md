@@ -147,28 +147,64 @@ python -m pip install -r requirements-stim.txt
 ```bash
 cd frontend
 npm install
-npm run dev      # dev server
-npm run lint     # eslint
-npm run typecheck
-npm run build    # production build
-npm run test:e2e # Playwright smoke suite (first: npx playwright install chromium)
+npm run dev        # dev server
+npm run lint       # eslint (--max-warnings 0)
+npm run typecheck  # tsc --noEmit
+npm run build      # production build
+npm run test:e2e   # Playwright: smoke + accessibility + visual
+                   # first run: npx playwright install chromium
 ```
 
-The Playwright smoke suite starts its own production server on port 3130 and
-does **not** require the backend: it asserts the shell identity, live
-telemetry, mode navigation, roving grid keyboard navigation, and the local
-state preview.
+The Playwright suites start their own production server on port 3130 and do
+**not** require the backend — they assert the workbench renders honestly when
+the API is unreachable:
+
+- `e2e/smoke.spec.ts` — routing, deep links, compressed/legacy/invalid share
+  links, clipboard round-trip, undo/redo, command palette (including actions
+  registered by the Composer), the projects drawer, roving grid keys, and the
+  live state preview.
+- `e2e/a11y.spec.ts` — **axe** (WCAG 2 A/AA) on all three routes plus the
+  palette and projects drawer; fails on serious/critical violations.
+- `e2e/visual.spec.ts` — screenshots at desktop and phone widths. Baselines are
+  platform-specific, so this suite is skipped in CI; refresh locally with
+  `npx playwright test e2e/visual.spec.ts --update-snapshots`.
+
+### Workspace model
+
+The app is an **instrument workbench**: a left activity rail (bottom tab bar on
+narrow screens) switches between the three real routes — **`/composer`**,
+**`/simulator`**, **`/crypto`** (deep-linkable, back/forward works, each
+code-split) — while a slim console header carries live instruments: circuit
+telemetry, autosave/project state, and backend health. The circuit lives in a
+workspace provider shared across routes:
+
+- **Undo/redo** — every edit is history-tracked (`Ctrl+Z` / `Ctrl+Shift+Z` /
+  `Ctrl+Y`, plus toolbar buttons).
+- **Named projects & recents** — save, rename, duplicate, delete, search, and
+  JSON import/export from the Projects drawer. Edits autosave to the active
+  project (or to an anonymous slot); recents are reopenable from the palette.
+  Storage is local to the browser and corruption-tolerant.
+- **Share links** — copies `/composer?c2=…`, the whole circuit
+  deflate-compressed into the URL (Quirk-style). Links are untrusted input:
+  they are strictly validated on load, never executed, and legacy `?c=` links
+  still decode.
+- **Command palette** — `Ctrl+K` opens a grouped palette (navigate, Composer
+  run/analyze/generate, circuit actions, projects, presets). Views register
+  their own actions, so the palette is never coupled to a page.
+- **Live state preview** — for ≤5 qubits the Composer computes the ideal state
+  locally: basis probabilities with phases, an interactive **Bloch sphere**
+  (drag or arrow keys) for one qubit, and a concurrence-based entanglement
+  readout for two. Above that it explains the exponential wall instead.
 
 Open `http://localhost:3000`. Copy `.env.example` to `.env.local` only if the
 API is not at `http://localhost:8000`.
 
-Use the header tabs to switch between **Composer**, **Simulator Lab**, and
-**Cryptography Lab**. The UI is a dark "quantum control room" interface: cyan
-for quantum simulation, green for safe, amber for heavy, red for infeasible,
-with a faint qubit-wire background texture and a self-hosted type system
-(Chakra Petch for instrument labels and headings, Archivo for UI text,
-JetBrains Mono for bitstrings, counts, and code — latin subsets committed under
-`frontend/app/fonts/`, so builds need no font network access).
+The UI is a dark instrument interface: cyan for quantum simulation, green for
+safe, amber for heavy, red for infeasible, with a qubit-wire background texture
+and a self-hosted type system (Chakra Petch for instrument labels and headings,
+Archivo for UI text, JetBrains Mono for bitstrings, counts, and code — latin
+subsets committed under `frontend/app/fonts/`, so builds need no font network
+access). Text colors are verified against WCAG AA by the axe suite.
 
 ### Interface captures
 
