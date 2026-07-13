@@ -2,37 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Font variables (--font-ui, --font-display, --font-mono) are injected on <html>
-   by next/font/local in app/layout.tsx: Archivo, Chakra Petch, JetBrains Mono. */
+/* Font variables (--font-ui, --font-mono) are injected on <html> by
+   next/font/local in app/layout.tsx: Archivo, JetBrains Mono. */
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 
 html {
   min-width: 300px;
-  background: #070b10;
+  background: #f6f6f8;
   scroll-behavior: smooth;
 }
 
-/* The page atmosphere is a faint quantum-circuit texture: horizontal qubit
-   "wires" with node dots where gates would sit, plus a cyan instrument glow
-   top-left and a whisper of violet bottom-right. Deliberately quieter than any
-   content placed on top of it. */
 body {
   margin: 0;
   min-height: 100vh;
-  color: #e6edf4;
-  background:
-    radial-gradient(circle 1.2px at 28px 28px, rgba(103, 232, 249, 0.075) 40%, transparent 100%),
-    linear-gradient(rgba(111, 128, 146, 0.055) 1px, transparent 1px),
-    radial-gradient(900px circle at 16% -12%, rgba(34, 211, 238, 0.07), transparent 48%),
-    radial-gradient(760px circle at 108% 118%, rgba(139, 92, 246, 0.05), transparent 55%),
-    #070b10;
-  background-size: 112px 56px, 100% 56px, auto, auto, auto;
-  background-position: 0 0, 0 27.5px, 0 0, 0 0, 0 0;
-  background-attachment: fixed;
+  color: #18181b;
+  background: #f6f6f8;
   font-family: var(--font-ui), "Inter", ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -41,86 +29,70 @@ body {
 button, input, select, textarea { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 
-::selection { color: #031014; background: #67e8f9; }
+::selection { color: #ffffff; background: #6366f1; }
 
 :where(button, input, select, textarea, a):focus-visible {
-  outline: 2px solid #22d3ee;
+  outline: 2px solid #4f46e5;
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
-.instrument-label {
-  color: #7d90a4;
-  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  line-height: 1rem;
-  text-transform: uppercase;
-}
-
-/* Workspace motion: brief, purposeful, and disabled by prefers-reduced-motion
-   via the global override below. */
-@keyframes route-fade {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
-.route-fade { animation: route-fade 240ms ease-out; }
-
-@keyframes toast-enter {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
-  to { opacity: 1; transform: none; }
-}
-.toast-enter { animation: toast-enter 180ms ease-out; }
-
-@keyframes drawer-enter {
-  from { transform: translateX(24px); opacity: 0.4; }
-  to { transform: none; opacity: 1; }
-}
-.drawer-enter { animation: drawer-enter 200ms ease-out; }
-
-/* Coherence hairline: the command bar's bottom edge reads as a signal trace. */
-.coherence-line {
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(34, 211, 238, 0.55) 12%,
-    rgba(34, 211, 238, 0.18) 38%,
-    rgba(139, 92, 246, 0.28) 72%,
-    transparent 100%
-  );
-}
-
-.instrument-panel { position: relative; }
-.instrument-panel::before {
-  position: absolute;
-  top: -1px;
-  left: 18px;
-  width: 44px;
-  height: 1px;
-  content: "";
-  background: rgba(34, 211, 238, 0.72);
-  box-shadow: 48px 0 rgba(34, 211, 238, 0.18);
-}
-
-.lab-grid-bg {
-  background-image:
-    linear-gradient(rgba(148, 163, 184, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.045) 1px, transparent 1px);
-  background-size: 28px 28px;
+/* Eyebrow / meta label used sparingly (never as the dominant typographic
+   voice — that was the old "instrument label everywhere" identity).
+   Wrapped in @layer components so a paired Tailwind color utility (e.g.
+   `className="eyebrow text-accent-700"`) can actually override `color` —
+   unlayered rules always beat @layer utilities regardless of source order,
+   which was silently no-op-ing every such override before this was added. */
+@layer components {
+  .eyebrow {
+    color: #63636c;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    line-height: 1rem;
+    text-transform: uppercase;
+  }
 }
 
 .tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* --- Compatibility layer -------------------------------------------------
+   Class names from the pre-rebuild dark theme, kept so leaf components not
+   yet individually re-authored still render on the new light system instead
+   of losing all styling. See the equivalent note in tailwind.config.ts. */
+/* Same @layer reasoning as .eyebrow above — a paired `text-*` override must
+   actually be able to beat this. */
+@layer components {
+  .instrument-label { color: #63636c; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; line-height: 1rem; text-transform: uppercase; }
+}
+.instrument-panel { position: relative; }
+.lab-grid-bg { background-image: radial-gradient(circle, #d4d4d8 1px, transparent 1px); background-size: 20px 20px; }
+.coherence-line { height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(79,70,229,.35) 20%, rgba(79,70,229,.12) 50%, transparent 100%); }
+
+@keyframes route-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.route-fade { animation: route-fade 240ms ease-out; }
+@keyframes toast-enter { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+.toast-enter { animation: toast-enter 180ms ease-out; }
+@keyframes drawer-enter { from { transform: translateX(24px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+.drawer-enter { animation: drawer-enter 200ms ease-out; }
+
+/* Dot-grid canvas texture: a quiet spatial cue (like a design-tool canvas),
+   not a "circuit wire" skeuomorph. Wires are drawn explicitly by the SVG
+   editor; the background just signals "this is a spatial surface." */
+.canvas-dots {
+  background-image: radial-gradient(circle, #d4d4d8 1px, transparent 1px);
+  background-size: 20px 20px;
+}
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
-  background: #26384a;
+  background: #d4d4d8;
   background-clip: padding-box;
 }
-::-webkit-scrollbar-thumb:hover { background: #365067; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: #b8b8c0; background-clip: padding-box; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

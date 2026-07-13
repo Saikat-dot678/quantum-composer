@@ -13,21 +13,26 @@ honest about the hard limits of classical simulation.
 ## Features
 
 ### Composer
-- Scrollable visual grid for interactive circuits up to 128 qubits with X, Y, Z,
-  H, S, T, RX/RY/RZ, CX, CZ, SWAP, Measure, and Barrier. Rendering uses a
-  two-stage cell-count guard (warn, then pause) so an oversized grid does not
-  lock the browser; larger structured circuits are generated from compact
-  descriptors and handled in Simulator Lab instead of being hand-drawn.
+- A real spatial circuit editor: a pannable/zoomable SVG canvas (not a DOM
+  grid) with X, Y, Z, H, S, T, RX/RY/RZ, CX, CZ, SWAP, Measure, and Barrier,
+  a floating searchable gate dock, drag-from-dock-to-wire placement (click
+  placement remains the accessible baseline — dragging is never the only way
+  to place a gate), a bird's-eye minimap for large circuits, and a contextual
+  inspector that stays empty until a placed gate is selected. Viewport-based
+  virtualization (only the visible cells are iterated per render) is what
+  makes a 128-qubit × 256-moment circuit navigable at all.
 - Circuit JSON, generated Qiskit code, OpenQASM 2, counts histogram, depth, gate
-  counts, and text diagram. The V1 code/QASM/exact path remains limited to
+  counts, and text diagram, docked in a collapsible bottom sheet that
+  auto-expands after a run. The V1 code/QASM/exact path remains limited to
   8 qubits, 8 classical bits, 200 operations, and 8,192 shots; circuits outside
   that envelope use the V2 simulator path and retain JSON output.
-- **Live instruments:** the status rail shows the active circuit's qubits,
-  Clifford class, route, and instant exact-memory estimate as you edit; for
-  circuits up to 5 qubits the composer renders a local ideal-state preview
-  (basis probabilities, phases, and a 1-qubit Bloch projection) — above that it
-  explains the exponential wall instead. The circuit grid supports roving
-  arrow-key navigation with a single tab stop.
+- **Live instruments:** the floating toolbar shows the active circuit's
+  qubit/op count and route as you edit; for circuits up to 5 qubits the
+  inspector renders a local ideal-state preview (basis probabilities, phases,
+  and a 1-qubit Bloch projection) — above that it explains the exponential
+  wall instead. The canvas has one tab stop; arrow keys move a keyboard
+  cursor and an aria-live region announces its cell, since a zoomable spatial
+  canvas can't expose one focusable DOM node per cell at scale.
 - Presets: superposition, Bell, GHZ, teleportation skeleton, Deutsch–Jozsa,
   Grover, BB84.
 
@@ -35,6 +40,10 @@ honest about the hard limits of classical simulation.
 - Engines: `aer_statevector`, `aer_mps` (MPS), `aer_stabilizer`,
   `aer_density_matrix` (noise), optional `stim_stabilizer`, and an honest `auto`
   router.
+- A memory-scaling chart plots the actual 16×2ⁿ / 16×4ⁿ curves against the run
+  budget and the active circuit's qubit count, above a compact five-lane
+  engine strip that expands exactly one lane's reasoning (scaling, ideal use,
+  limitation) at a time.
 - Circuit analysis: Clifford classification, T-count / rotation count,
   statevector **and** density-matrix memory estimates, feasibility badge, and
   recommended engines — computed *before* running.
@@ -46,6 +55,12 @@ honest about the hard limits of classical simulation.
 - Protocol-level, optionally seeded simulators: **BB84**, **E91** (with a CHSH
   indicator), **B92**, and a **QRNG**. Reusing an explicit seed reproduces a
   run; an omitted seed does not.
+- Each protocol's live signal path is drawn as an actual actor/channel
+  diagram, not a status list: Alice → channel → Bob for BB84/B92 with Eve
+  rendered as a literal interception node on the wire when enabled; a shared
+  Source emitting to independent Alice/Bob analyzers for E91 (its real
+  topology); a single Prepare → Hadamard → Measure → Bits pipeline for QRNG,
+  which has no second party. The diagram redraws live as controls change.
 - QBER reporting, Eve intercept-resend, and Toeplitz-hash privacy amplification.
 
 ## Can this simulate 100 qubits?
@@ -155,28 +170,39 @@ npm run test:e2e   # Playwright: smoke + accessibility + visual
                    # first run: npx playwright install chromium
 ```
 
-The Playwright suites start their own production server on port 3130 and do
-**not** require the backend — they assert the workbench renders honestly when
-the API is unreachable:
+`e2e/smoke.spec.ts`, `e2e/a11y.spec.ts`, and `e2e/visual.spec.ts` start their
+own production server on port 3130 and do **not** require the backend — they
+assert the workbench renders honestly when the API is unreachable:
 
 - `e2e/smoke.spec.ts` — routing, deep links, compressed/legacy/invalid share
-  links, clipboard round-trip, undo/redo, command palette (including actions
-  registered by the Composer), the projects drawer, roving grid keys, and the
-  live state preview.
+  links, clipboard round-trip, undo/redo, placing single- and two-qubit gates,
+  repositioning a gate (select/delete/re-place), the command palette
+  (including actions registered by the Composer), the projects drawer, mobile
+  bottom sheets and route switching, canvas arrow-key cursor navigation, the
+  live state preview, and an explicit offline-state assertion.
 - `e2e/a11y.spec.ts` — **axe** (WCAG 2 A/AA) on all three routes plus the
   palette and projects drawer; fails on serious/critical violations.
 - `e2e/visual.spec.ts` — screenshots at desktop and phone widths. Baselines are
   platform-specific, so this suite is skipped in CI; refresh locally with
   `npx playwright test e2e/visual.spec.ts --update-snapshots`.
 
+`e2e/backend.spec.ts` is separate and **does** require a locally running
+FastAPI backend (`cd backend && python -m uvicorn main:app --port 8000`): it
+runs the default circuit, analyzes it and checks the backend-verified
+feasibility surfaces in the inspector, hands the circuit off to Simulator Lab,
+switches engine lanes, and runs BB84 with Eve enabled. Each test in it skips
+itself if the backend isn't reachable, so `npm run test:e2e` stays green
+without it running.
+
 ### Workspace model
 
-The app is an **instrument workbench**: a left activity rail (bottom tab bar on
-narrow screens) switches between the three real routes — **`/composer`**,
-**`/simulator`**, **`/crypto`** (deep-linkable, back/forward works, each
-code-split) — while a slim console header carries live instruments: circuit
-telemetry, autosave/project state, and backend health. The circuit lives in a
-workspace provider shared across routes:
+The app is an **Instrument Canvas**: a slim 56px top bar (product mark, a
+segmented control switching the three real routes, backend/project status,
+palette and projects triggers) sits above whichever route owns the rest of
+the viewport — **`/composer`**, **`/simulator`**, **`/crypto`** (deep-linkable,
+back/forward works, each code-split). Circuit telemetry lives as a contextual
+on-canvas chip in Composer rather than as global chrome repeated on every
+route. The circuit lives in a workspace provider shared across routes:
 
 - **Undo/redo** — every edit is history-tracked (`Ctrl+Z` / `Ctrl+Shift+Z` /
   `Ctrl+Y`, plus toolbar buttons).
@@ -199,34 +225,40 @@ workspace provider shared across routes:
 Open `http://localhost:3000`. Copy `.env.example` to `.env.local` only if the
 API is not at `http://localhost:8000`.
 
-The UI is a dark instrument interface: cyan for quantum simulation, green for
-safe, amber for heavy, red for infeasible, with a qubit-wire background texture
-and a self-hosted type system (Chakra Petch for instrument labels and headings,
-Archivo for UI text, JetBrains Mono for bitstrings, counts, and code — latin
+The UI is a light, neutral "Instrument Canvas" system: a pure-neutral gray
+ramp (no warm/cool tint), an off-white canvas background, and a single indigo
+accent reserved for primary actions and selection — semantic color (emerald
+for safe, amber for heavy, rose for infeasible) stays reserved for
+feasibility state, never decorative. Self-hosted type system: Archivo for UI
+text and headings, JetBrains Mono for bitstrings, counts, and code (latin
 subsets committed under `frontend/app/fonts/`, so builds need no font network
-access). Text colors are verified against WCAG AA by the axe suite.
+access). Text colors are verified against WCAG AA by the axe suite and by
+numeric contrast checks during development.
 
 ### Interface captures
 
-The redesigned Composer, Simulator Lab, and Cryptography Lab were visually
-checked at desktop and narrow-screen widths during implementation. Maintained
-image assets are not committed yet; add current captures here when the project
-adopts a screenshot-update workflow rather than presenting stale UI images.
+`docs/frontend-before/` and `docs/frontend-after/` hold matched screenshots of
+Composer, Simulator Lab, and Cryptography Lab at 1440×900, 1280×720, and
+390×844, captured with Playwright. `docs/FRONTEND_REFERENCE_STUDY.md` records
+the product research behind the current design direction and what changed
+structurally, not just cosmetically.
 
 ### Frontend structure
 
-The redesign keeps the app entry point thin and organizes components by feature
-boundary rather than one monolithic page. The exact filenames may evolve, but
-the intended ownership is stable:
+The app entry point stays thin; components are organized by feature boundary
+rather than one monolithic page. The exact filenames may evolve, but the
+intended ownership is stable:
 
-- `components/shell/` — application frame, mode navigation, backend/current-mode
-  status, and the persistent honesty note;
-- `components/composer/` — toolbar, palette, grid/rows/cells, settings, presets,
-  and composer orchestration;
-- `components/simulator/` — sources, engine/options controls, feasibility and
-  resource analysis, results, and engine availability;
-- `components/crypto/` — shared protocol navigation plus BB84, E91, B92, and
-  QRNG workflows;
+- `components/shell/` — `TopBar` (mode switch, backend/project status), and
+  the persistent honesty note;
+- `components/composer/` — `CircuitCanvas` + `lib/canvasGeometry.ts` (the SVG
+  editor and its pure geometry), `CanvasMinimap`, `CanvasToolbar`, `GateDock`,
+  `CircuitInspector`, `OutputDock`, and composer orchestration;
+- `components/simulator/` — `EngineScalingChart`, `EngineStrip` +
+  `lib/engineLanes.ts` (the engine-compatibility data model), circuit
+  analysis, results, sources/options controls, and engine availability;
+- `components/crypto/` — `ProtocolDiagram` (the actor/channel visualization),
+  shared protocol navigation, plus BB84, E91, B92, and QRNG result panels;
 - `components/output/` — generated code, measurement results, and histograms;
 - `components/ui/` — lightweight repository-owned form, feedback, display, and
   accessibility primitives;
@@ -336,20 +368,20 @@ With the backend on `:8000` and the frontend on `:3000`:
 7. **Optional Stim** — `GET /engines` shows `stim_stabilizer` available only if
    `stim` is installed; the UI and router behave correctly either way.
 
-Backend contract equivalents run headless via `python -m pytest -q` (34 tests in
+Backend contract equivalents run headless via `python -m pytest -q` (47 tests in
 the current suite). CI runs backend tests plus frontend lint/typecheck/build
 checks; it does not automate the browser interactions listed above.
 
 ## Limits and current scope
 
 - **Visual composer limits are separate from simulation feasibility limits.** The
-  interactive grid draws up to 128 qubits (`LIMITS.composer` in
+  interactive canvas draws up to 128 qubits (`LIMITS.composer` in
   `frontend/lib/constants.ts`); the guarded V1 `/circuit/simulate` path keeps
   its full small-request envelope, and circuits exceeding any V1 limit are routed
   to `/circuit/simulate-v2` (or opened in Simulator Lab). Circuits wider than the
-  interactive grid exist only as generated descriptors — the 100-qubit GHZ and
-  1000-qubit Clifford teaching presets are built on demand and never rendered as
-  DOM rows.
+  interactive canvas exist only as generated descriptors — the 100-qubit GHZ and
+  1000-qubit Clifford teaching presets are built on demand and never hand-drawn
+  in the editor.
 - The Simulator Lab accepts larger structured circuits (up to 4096 qubits in the
   schema), gated by the resource estimator and per-engine hard caps. The 4096
   value is a request-schema ceiling, not a claim that every such circuit runs.
@@ -360,8 +392,10 @@ checks; it does not automate the browser interactions listed above.
 - Cryptography simulators are **protocol-level**. Runs are reproducible when the
   same explicit `seed` is supplied; the QRNG is educational, not a certified
   hardware generator.
-- No dynamic conditions, custom gates, statevector/Bloch viewers, or real
-  hardware execution yet — see the [roadmap](docs/BEAST_MODE_ROADMAP.md).
+- No dynamic conditions, custom gates, or real hardware execution yet — see
+  the [roadmap](docs/BEAST_MODE_ROADMAP.md). The statevector/Bloch preview
+  that does exist is a local, ideal-state approximation for ≤5 qubits, not a
+  general viewer for arbitrary circuit sizes.
 - Estimator budgets and qubit caps reduce accidental resource use but do not
   replace process/container memory limits, concurrency control, or timeouts.
 

@@ -2,29 +2,20 @@ import type { Metadata } from "next";
 import type { Viewport } from "next";
 import localFont from "next/font/local";
 import { ActionRegistryProvider } from "@/components/workspace/ActionRegistry";
+import { MotionRoot } from "@/components/workspace/MotionRoot";
 import { ToastProvider } from "@/components/workspace/ToastProvider";
 import { WorkspaceProvider } from "@/components/workspace/WorkspaceProvider";
 import { WorkspaceShell } from "@/components/workspace/WorkspaceShell";
 import "./globals.css";
 
-// Self-hosted, deterministic type system (latin subsets, ~114 KB total):
-// - Archivo (variable): utilitarian grotesque for UI text.
-// - Chakra Petch: squared HUD face for instrument labels, headings, and badges.
-// - JetBrains Mono (variable): bitstrings, counts, memory figures, code.
+// Self-hosted, deterministic type system (latin subsets):
+// - Archivo (variable): the sole UI/display grotesque — one confident family
+//   at varying weight, not a separate "HUD" face for headings.
+// - JetBrains Mono (variable): bitstrings, counts, memory figures, code only.
 const fontUi = localFont({
   src: "./fonts/archivo-var.woff2",
   weight: "100 900",
   variable: "--font-ui",
-  display: "swap",
-});
-
-const fontDisplay = localFont({
-  src: [
-    { path: "./fonts/chakra-petch-500.woff2", weight: "500" },
-    { path: "./fonts/chakra-petch-600.woff2", weight: "600" },
-    { path: "./fonts/chakra-petch-700.woff2", weight: "700" },
-  ],
-  variable: "--font-display",
   display: "swap",
 });
 
@@ -41,21 +32,23 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  colorScheme: "dark",
-  themeColor: "#070b10",
+  colorScheme: "light",
+  themeColor: "#f6f6f8",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${fontUi.variable} ${fontDisplay.variable} ${fontMono.variable}`}>
+    <html lang="en" className={`${fontUi.variable} ${fontMono.variable}`}>
       <body>
-        <WorkspaceProvider>
-          <ToastProvider>
-            <ActionRegistryProvider>
-              <WorkspaceShell>{children}</WorkspaceShell>
-            </ActionRegistryProvider>
-          </ToastProvider>
-        </WorkspaceProvider>
+        <MotionRoot>
+          <WorkspaceProvider>
+            <ToastProvider>
+              <ActionRegistryProvider>
+                <WorkspaceShell>{children}</WorkspaceShell>
+              </ActionRegistryProvider>
+            </ToastProvider>
+          </WorkspaceProvider>
+        </MotionRoot>
       </body>
     </html>
   );

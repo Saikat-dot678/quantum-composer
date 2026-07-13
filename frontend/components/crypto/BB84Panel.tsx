@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BitStringViewer } from "@/components/ui/BitStringViewer";
-import { AlertIcon, CheckIcon, XIcon } from "@/components/ui/icons";
+import { AlertTriangle, Check, X } from "lucide-react";
 import { Badge, Callout } from "@/components/ui/primitives";
 import { formatPercent } from "@/lib/formatting";
 import type { BB84Result } from "@/lib/labTypes";
@@ -27,7 +27,7 @@ function Metric({ label, value, tone = "text-lab-text", detail }: { label: strin
 }
 
 function ActorNode({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: "cyan" | "red" | "green" | "violet" }) {
-  const color = tone === "red" ? "border-accent-red/45 bg-accent-red/[.075] text-red-100" : tone === "green" ? "border-accent-green/40 bg-accent-green/[.06] text-emerald-100" : tone === "violet" ? "border-quantum-400/40 bg-quantum-400/[.07] text-violet-100" : "border-accent-cyan/40 bg-accent-cyan/[.065] text-cyan-100";
+  const color = tone === "red" ? "border-accent-red/45 bg-accent-red/[.075] text-danger-text" : tone === "green" ? "border-accent-green/40 bg-accent-green/[.06] text-safe-text" : tone === "violet" ? "border-quantum-400/40 bg-quantum-400/[.07] text-quantum-text" : "border-accent-cyan/40 bg-accent-cyan/[.065] text-accent-700";
   return (
     <div className={`flex min-h-[92px] min-w-[142px] flex-col justify-between rounded-xl border p-3 ${color}`}>
       <p className="text-[10px] font-semibold uppercase tracking-[.14em] opacity-70">{label}</p>
@@ -99,8 +99,8 @@ export function BB84Panel({ result }: { result: BB84Result }) {
             </div>
           </div>
 
-          <div className={`mt-3 flex gap-3 rounded-lg border px-3 py-2.5 text-[11px] leading-4 ${selectedError ? "border-accent-red/30 bg-accent-red/[.055] text-red-100" : kept ? "border-accent-green/25 bg-accent-green/[.045] text-emerald-100" : "border-lab-border bg-lab-panel/70 text-lab-muted"}`}>
-            {selectedError ? <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" /> : kept ? <CheckIcon className="mt-0.5 h-4 w-4 shrink-0" /> : <XIcon className="mt-0.5 h-4 w-4 shrink-0 text-lab-faint" />}
+          <div className={`mt-3 flex gap-3 rounded-lg border px-3 py-2.5 text-[11px] leading-4 ${selectedError ? "border-accent-red/30 bg-accent-red/[.055] text-danger-text" : kept ? "border-accent-green/25 bg-accent-green/[.045] text-safe-text" : "border-lab-border bg-lab-panel/70 text-lab-muted"}`}>
+            {selectedError ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> : kept ? <Check className="mt-0.5 h-4 w-4 shrink-0" /> : <X className="mt-0.5 h-4 w-4 shrink-0 text-lab-faint" />}
             <p>{selectedError ? `Alice and Bob chose ${aliceBasis}, so this position survives sifting—but Bob measured ${bobBit} instead of ${aliceBit}.` : kept ? `Both parties chose ${aliceBasis}. The measured bit agrees, so this position enters the sifted strings.` : `Alice used ${aliceBasis} while Bob used ${bobBasis}. They reveal only their bases and discard this position.`}</p>
           </div>
         </div>
@@ -113,7 +113,7 @@ export function BB84Panel({ result }: { result: BB84Result }) {
             aria-valuemax={50}
             aria-valuenow={Math.round(result.qber * 100)}
             className="mx-auto grid h-36 w-36 place-items-center rounded-full p-3"
-            style={{ background: `conic-gradient(${disturbed ? "#f87171" : "#34d399"} ${qberDegrees}%, #121c27 ${qberDegrees}% 100%)` }}
+            style={{ background: `conic-gradient(${disturbed ? "#dc2626" : "#059669"} ${qberDegrees}%, #e4e4e7 ${qberDegrees}% 100%)` }}
           >
             <div className="grid h-full w-full place-items-center rounded-full border border-lab-border bg-lab-panel text-center">
               <div><p className="font-mono text-2xl font-semibold text-lab-text">{formatPercent(result.qber, 1)}</p><p className="instrument-label mt-1">QBER</p></div>
@@ -156,8 +156,8 @@ export function BB84Panel({ result }: { result: BB84Result }) {
           <p className="instrument-label mb-2">Sifting outcome</p>
           <DistributionBar label="BB84 basis reconciliation" segments={[
             { label: "discarded", value: result.charts_data.basis_mismatch_count, className: "bg-lab-borderStrong text-lab-text" },
-            { label: "kept", value: result.charts_data.basis_match_count - result.charts_data.sifted_error_count, className: "bg-accent-green text-[#031014]" },
-            { label: "errors", value: result.charts_data.sifted_error_count, className: "bg-accent-red text-[#180607]" },
+            { label: "kept", value: result.charts_data.basis_match_count - result.charts_data.sifted_error_count, className: "bg-accent-green text-white" },
+            { label: "errors", value: result.charts_data.sifted_error_count, className: "bg-accent-red text-white" },
           ]} />
           <p className="mt-3 text-[10px] leading-4 text-lab-faint">In the visible sample, retained-bit errors occur at transmission position{errorTransmissions.length === 1 ? "" : "s"} {errorTransmissions.length ? errorTransmissions.map((index) => index + 1).join(", ") : "none"}.</p>
         </div>
@@ -169,8 +169,8 @@ export function BB84Panel({ result }: { result: BB84Result }) {
 
       <div className="grid gap-4 p-4 sm:p-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)]">
         <Callout tone={disturbed ? "warning" : "info"} title={disturbed ? "Channel should be rejected in this model" : "Current modeled channel"}>{result.explanation} QBER alone cannot attribute the disturbance to Eve.</Callout>
-        <div className="rounded-lg border border-quantum-400/25 bg-quantum-400/[.045] px-3.5 py-3 text-[11px] leading-4 text-violet-100/85">
-          <p className="font-semibold text-violet-100">Privacy-amplification boundary</p>
+        <div className="rounded-lg border border-quantum-400/25 bg-quantum-400/[.045] px-3.5 py-3 text-[11px] leading-4 text-quantum-text">
+          <p className="font-semibold text-quantum-text">Privacy-amplification boundary</p>
           <p className="mt-1">The displayed {result.final_key_length}-bit Alice-side output is an educational compression illustration. This model does not perform authenticated error reconciliation, so it is not a proven shared final key.</p>
         </div>
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { PlayIcon, ShieldIcon } from "@/components/ui/icons";
+import { Play, Shield } from "lucide-react";
 import { Badge, Button, ErrorState } from "@/components/ui/primitives";
 import { useRegisterActions, type RegisteredAction } from "@/components/workspace/ActionRegistry";
 import { useToast } from "@/components/workspace/ToastProvider";
@@ -15,7 +15,7 @@ import { E91Panel } from "./E91Panel";
 import { DEFAULT_CRYPTO_PREFERENCES, loadCryptoPreferences, saveCryptoPreferences } from "./preferences";
 import { ProtocolBrief } from "./ProtocolBrief";
 import { ProtocolControlPanel } from "./ProtocolControlPanel";
-import { ProtocolFlow } from "./ProtocolFlow";
+import { ProtocolDiagram } from "./ProtocolDiagram";
 import { ProtocolTabs } from "./ProtocolTabs";
 import { QRNGPanel } from "./QRNGPanel";
 
@@ -28,12 +28,12 @@ function EmptyProtocolStage({ protocol, onRun }: { protocol: Protocol; onRun: ()
     <div className={`flex min-h-[330px] items-center justify-center px-5 py-10 text-center ${styles.stageGrid}`}>
       <div className="max-w-md">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-accent-cyan/30 bg-accent-cyan/[.07] text-accent-cyan shadow-glow">
-          <ShieldIcon className="h-6 w-6" />
+          <Shield className="h-6 w-6" />
         </div>
         <p className="instrument-label mt-5 text-accent-cyan">Configuration armed</p>
         <h3 className="mt-1 font-display text-lg font-semibold text-lab-text">Observe the first {definition.name} run</h3>
         <p className="mt-2 text-xs leading-5 text-lab-muted">{definition.summary} The signal path above previews the current controls before any request is sent.</p>
-        <Button variant="primary" className="mt-5" onClick={onRun}><PlayIcon className="h-4 w-4" />Run {definition.name}</Button>
+        <Button variant="primary" className="mt-5" onClick={onRun}><Play className="h-4 w-4" />Run {definition.name}</Button>
       </div>
     </div>
   );
@@ -212,9 +212,9 @@ export function CryptographyLab() {
     <div className="mx-auto max-w-[1880px] p-3 sm:p-5 lg:p-6 2xl:p-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="instrument-label text-accent-cyan">Quantum communication console</p>
-          <h1 className="mt-1 font-display text-xl font-semibold tracking-[-0.02em] text-lab-text sm:text-2xl">Protocol analysis workspace</h1>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-lab-muted">Trace signal decisions, disturbance, sifting, and finite-sample evidence across four educational protocol models.</p>
+          <p className="eyebrow text-accent-700">Cryptography Lab</p>
+          <h1 className="mt-1 font-display text-xl font-semibold tracking-[-0.02em] text-ink-900 sm:text-2xl">Protocol analysis workspace</h1>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-ink-400">Trace signal decisions, disturbance, sifting, and finite-sample evidence across four educational protocol models.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="cyan">Protocol-level simulation</Badge>
@@ -232,14 +232,14 @@ export function CryptographyLab() {
           role="tabpanel"
           aria-labelledby={`protocol-tab-${protocol}`}
           aria-busy={busy}
-          className="order-2 min-w-0 overflow-hidden rounded-xl border border-lab-border bg-lab-panel shadow-panel xl:order-1"
+          className="order-2 min-w-0 overflow-hidden rounded-xl2 border border-line bg-surface shadow-floating xl:order-1"
         >
-          <div className={`border-b border-lab-border px-4 py-4 sm:px-5 ${styles.stageGrid}`}>
+          <div className={`border-b border-line-hairline px-4 py-4 sm:px-5 ${styles.stageGrid}`}>
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="instrument-label">Live signal path</p>
-                <h2 className="mt-1 font-display text-lg font-semibold text-lab-text">{definition.name} protocol observatory</h2>
-                <p className="mt-1 max-w-3xl text-xs leading-5 text-lab-muted">{definition.summary}</p>
+                <p className="eyebrow">Live signal path</p>
+                <h2 className="mt-1 font-display text-lg font-semibold text-ink-900">{definition.name} protocol observatory</h2>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-ink-500">{definition.summary}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {(protocol === "bb84" || protocol === "e91") && <Badge tone={eveEnabled ? "red" : "green"} dot>{eveEnabled ? "Eve in path" : "Direct channel"}</Badge>}
@@ -247,10 +247,10 @@ export function CryptographyLab() {
                 <Badge tone={stale ? "amber" : hasResult ? "green" : "neutral"}>{stale ? "Result stale" : hasResult ? "Observed" : "Preview"}</Badge>
               </div>
             </div>
-            <ProtocolFlow protocol={protocol} eveEnabled={eveEnabled} channelError={channelError} numBits={numBits} busy={busy} hasResult={hasResult} stale={stale} />
+            <ProtocolDiagram protocol={protocol} eveEnabled={eveEnabled} channelError={channelError} numBits={numBits} busy={busy} hasResult={hasResult} stale={stale} />
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-lab-border bg-[#080d13] px-4 py-2 text-[10px] leading-4 text-lab-faint sm:px-5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-hairline bg-surface-sunken px-4 py-2 text-[10px] leading-4 text-ink-400 sm:px-5">
             <span>Scope: reproducible educational statistics · no authenticated quantum network</span>
             <span className="font-mono">seed {seed === "" ? "random" : seed.toLocaleString()} · n={numBits.toLocaleString()}</span>
           </div>
@@ -258,9 +258,9 @@ export function CryptographyLab() {
           <p className="sr-only" aria-live="polite">{busy ? `Running ${definition.name}.` : error ? `${definition.name} failed.` : hasResult ? `${definition.name} result ready${stale ? ", but controls have changed" : ""}.` : `${definition.name} is ready to run.`}</p>
 
           {stale && (
-            <div role="status" className="flex items-center justify-between gap-3 border-b border-accent-amber/25 bg-accent-amber/[.055] px-4 py-2.5 text-[11px] leading-4 text-amber-100 sm:px-5">
+            <div role="status" className="flex items-center justify-between gap-3 border-b border-accent-amber/25 bg-accent-amber/[.055] px-4 py-2.5 text-[11px] leading-4 text-warn-text sm:px-5">
               <span>The controls changed after this observation. Values below remain visible for comparison but no longer match the signal path.</span>
-              <Button size="sm" variant="quiet" className="shrink-0 text-amber-100 hover:text-white" onClick={() => void run()}>Refresh</Button>
+              <Button size="sm" variant="quiet" className="shrink-0 text-warn-text hover:text-ink-900" onClick={() => void run()}>Refresh</Button>
             </div>
           )}
 

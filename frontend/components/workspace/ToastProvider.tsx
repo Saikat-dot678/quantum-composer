@@ -26,9 +26,9 @@ export function useToast(): ToastValue {
 }
 
 const TONE_CLASS: Record<ToastTone, string> = {
-  info: "border-accent-cyan/40 text-cyan-100",
-  success: "border-accent-green/40 text-emerald-100",
-  error: "border-accent-red/45 text-red-100",
+  info: "border-accent-cyan/40 text-accent-700",
+  success: "border-accent-green/40 text-safe-text",
+  error: "border-accent-red/45 text-danger-text",
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {

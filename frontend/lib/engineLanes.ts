@@ -1,13 +1,16 @@
-import { LIMITS } from "@/lib/constants";
-import { formatEngineName, formatInteger } from "@/lib/formatting";
-import type { CircuitAnalysis, EngineId, EnginesResponse, ResourceRisk } from "@/lib/labTypes";
-import { Badge, type BadgeTone } from "../ui/primitives";
-import { engineIsAvailable, preferredStabilizerEngine, resourceRiskForBudget } from "./simulatorModel";
+// Pure engine-compatibility data model, shared by the Simulator Lab's engine
+// strip and scaling chart. Moved out of the old SimulationMethodGuide (now
+// replaced by EngineStrip + EngineScalingChart) so both visual surfaces read
+// from one honest source of verdicts instead of duplicating the logic.
+import { LIMITS } from "./constants";
+import { formatEngineName, formatInteger } from "./formatting";
+import { engineIsAvailable, preferredStabilizerEngine, resourceRiskForBudget } from "@/components/simulator/simulatorModel";
+import type { CircuitAnalysis, EngineId, EnginesResponse, ResourceRisk } from "./labTypes";
 
-type LaneId = "statevector" | "stabilizer" | "mps" | "density" | "hardware";
-type LaneState = "fit" | "caution" | "blocked" | "external" | "pending";
+export type LaneId = "statevector" | "stabilizer" | "mps" | "density" | "hardware";
+export type LaneState = "fit" | "caution" | "blocked" | "external" | "pending";
 
-interface EngineLane {
+export interface EngineLane {
   id: LaneId;
   name: string;
   shortName: string;
@@ -24,22 +27,6 @@ interface EngineLane {
   selected: boolean;
 }
 
-const STATE_TONE: Record<LaneState, BadgeTone> = {
-  fit: "green",
-  caution: "amber",
-  blocked: "red",
-  external: "violet",
-  pending: "neutral",
-};
-
-const STATE_STYLE: Record<LaneState, string> = {
-  fit: "border-accent-green/35 bg-accent-green/[.035] hover:bg-accent-green/[.065]",
-  caution: "border-accent-amber/35 bg-accent-amber/[.035] hover:bg-accent-amber/[.06]",
-  blocked: "border-accent-red/25 bg-accent-red/[.025] opacity-80",
-  external: "border-quantum-400/30 bg-quantum-400/[.035]",
-  pending: "border-lab-border bg-lab-raised/25",
-};
-
 function recommended(analysis: CircuitAnalysis, ...ids: string[]): boolean {
   return ids.some((id) => analysis.recommended_engines.includes(id));
 }
@@ -50,7 +37,7 @@ function riskVerdict(risk: ResourceRisk): { state: LaneState; verdict: string } 
   return { state: "blocked", verdict: risk === "dangerous" ? "over budget" : "infeasible" };
 }
 
-function buildLanes({
+export function buildLanes({
   analysis,
   engines,
   selectedEngine,
@@ -228,113 +215,4 @@ function buildLanes({
       selected: false,
     },
   ];
-}
-
-export function SimulationMethodGuide({
-  analysis,
-  engines,
-  selectedEngine,
-  maxMemoryMb,
-  noiseEnabled,
-  allowApproximation,
-  disabled,
-  onSelectEngine,
-}: {
-  analysis: CircuitAnalysis | null;
-  engines: EnginesResponse | null;
-  selectedEngine: EngineId;
-  maxMemoryMb: number;
-  noiseEnabled: boolean;
-  allowApproximation: boolean;
-  disabled?: boolean;
-  onSelectEngine: (engine: EngineId) => void;
-}) {
-  const rows = buildLanes({ analysis, engines, selectedEngine, maxMemoryMb, noiseEnabled, allowApproximation });
-  const autoAvailable = engineIsAvailable("auto", engines, analysis);
-  const firstRecommendation = analysis?.recommended_engines[0];
-
-  return (
-    <section aria-labelledby="engine-bench-heading" className="border-b border-lab-border bg-lab-panel/55">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-lab-border px-4 py-3 sm:px-5">
-        <div>
-          <p className="instrument-label text-accent-cyan">Engine decision bench</p>
-          <h2 id="engine-bench-heading" className="mt-1 font-display text-base font-semibold text-lab-text">Choose a method from the circuit evidence</h2>
-          <p className="mt-1 max-w-3xl text-[11px] leading-4 text-lab-muted">
-            Verdicts react to the circuit, {formatInteger(maxMemoryMb)} MB run budget, {noiseEnabled ? "enabled noise" : "ideal sampling"}, and {allowApproximation ? "MPS opt-in" : "exact-first routing"}.
-          </p>
-        </div>
-        <button
-          type="button"
-          aria-pressed={selectedEngine === "auto"}
-          disabled={disabled || autoAvailable === false}
-          onClick={() => onSelectEngine("auto")}
-          className={`min-h-10 rounded-lg border px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${selectedEngine === "auto" ? "border-accent-cyan bg-accent-cyan/12 shadow-glow" : "border-lab-borderStrong bg-lab-raised/45 hover:border-accent-cyan/45"}`}
-        >
-          <span className="flex items-center gap-2 text-xs font-semibold text-lab-text">
-            Auto router
-            {selectedEngine === "auto" && <Badge tone="cyan">selected</Badge>}
-          </span>
-          <span className="mt-0.5 block text-[10px] text-lab-faint">
-            {firstRecommendation ? `Analyzer starts with ${formatEngineName(firstRecommendation)}` : "Backend chooses or rejects honestly"}
-          </span>
-        </button>
-      </div>
-
-      <div className="overflow-x-auto">
-        <div className="min-w-[760px] divide-y divide-lab-border/80" aria-label="Simulation method comparison">
-          {rows.map((row) => {
-            const canSelect = row.engine !== null && row.available !== false && !disabled;
-            const content = (
-              <>
-                <span className={`grid h-9 w-11 shrink-0 place-items-center rounded-md border font-mono text-[10px] font-bold ${row.selected ? "border-accent-cyan bg-accent-cyan/15 text-accent-cyan" : "border-lab-borderStrong bg-lab-bg text-lab-muted"}`}>{row.shortName}</span>
-                <span className="min-w-0">
-                  <span className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-xs font-semibold text-lab-text">{row.name}</span>
-                    <Badge tone={STATE_TONE[row.state]}>{row.verdict}</Badge>
-                    {row.selected && <Badge tone="cyan">selected</Badge>}
-                    {row.recommended && <Badge tone="green">recommended</Badge>}
-                    {row.available === false && <Badge tone="red">runtime unavailable</Badge>}
-                    {row.available === null && row.engine && <Badge tone="neutral">availability unknown</Badge>}
-                    {!row.engine && <Badge tone="violet">external only</Badge>}
-                  </span>
-                  <span className="mt-1 block text-[11px] leading-4 text-lab-muted">{row.reason}</span>
-                </span>
-                <span className="min-w-0 border-l border-lab-border pl-3">
-                  <span className="instrument-label">Scaling / memory</span>
-                  <span className="mt-1 block font-mono text-[10px] font-semibold text-accent-cyan">{row.scaling}</span>
-                  <span className="mt-0.5 block text-[10px] leading-4 text-lab-faint">{row.memory}</span>
-                </span>
-                <span className="min-w-0 border-l border-lab-border pl-3">
-                  <span className="instrument-label">Ideal use</span>
-                  <span className="mt-1 block text-[10px] leading-4 text-lab-muted">{row.ideal}</span>
-                  <span className="mt-1 block text-[10px] leading-4 text-lab-faint"><b className="text-lab-muted">Limit:</b> {row.limitation}</span>
-                </span>
-              </>
-            );
-
-            return row.engine ? (
-              <button
-                key={row.id}
-                type="button"
-                aria-pressed={row.selected}
-                disabled={!canSelect}
-                onClick={() => row.engine && onSelectEngine(row.engine)}
-                className={`grid w-full grid-cols-[44px_minmax(16rem,1.3fr)_minmax(10rem,.65fr)_minmax(13rem,.9fr)] items-start gap-3 border-l-2 px-4 py-3 text-left transition sm:px-5 ${STATE_STYLE[row.state]} ${row.selected ? "border-l-accent-cyan shadow-[inset_3px_0_rgba(34,211,238,.12)]" : "border-l-transparent"} disabled:cursor-not-allowed`}
-              >
-                {content}
-              </button>
-            ) : (
-              <article key={row.id} className={`grid grid-cols-[44px_minmax(16rem,1.3fr)_minmax(10rem,.65fr)_minmax(13rem,.9fr)] items-start gap-3 border-l-2 border-l-quantum-400/60 px-4 py-3 sm:px-5 ${STATE_STYLE[row.state]}`}>
-                {content}
-              </article>
-            );
-          })}
-        </div>
-      </div>
-
-      <p className="border-t border-lab-border px-4 py-2 text-[10px] leading-4 text-lab-faint sm:px-5">
-        Compatibility is a planning aid; the backend router remains authoritative. MPS suitability cannot be proven from gate counts alone, and real hardware is not a classical engine or connected execution target.
-      </p>
-    </section>
-  );
 }

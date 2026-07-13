@@ -57,7 +57,7 @@ export function QRNGPanel({ result }: { result: QRNGResult }) {
           </div>
           <div className="mt-4"><DistributionBar label="QRNG bit distribution" idealPercent={50} segments={[
             { label: `0 · ${formatPercent(result.frequency_0)}`, value: result.zero_count, className: "bg-lab-borderStrong text-lab-text" },
-            { label: `1 · ${formatPercent(result.frequency_1)}`, value: result.one_count, className: "bg-accent-cyan text-[#031014]" },
+            { label: `1 · ${formatPercent(result.frequency_1)}`, value: result.one_count, className: "bg-accent-cyan text-white" },
           ]} /></div>
 
           <div className="relative mt-6 h-36 border-b border-lab-borderStrong" role="img" aria-label={`Column chart: zero frequency ${formatPercent(result.frequency_0)}, one frequency ${formatPercent(result.frequency_1)}, ideal frequency 50 percent`}>

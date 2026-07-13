@@ -1,6 +1,6 @@
 import { formatEngineName, formatInteger } from "@/lib/formatting";
 import type { CircuitAnalysis, EnginesResponse } from "@/lib/labTypes";
-import { AlertIcon, RefreshIcon } from "@/components/ui/icons";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Badge, Button } from "../ui/primitives";
 import { resourceRiskForBudget } from "./simulatorModel";
 
@@ -43,13 +43,13 @@ export function CircuitAnalysisPanel({ analysis, loading, error, engines, runMem
       <section aria-labelledby="fingerprint-heading" className="border-b border-accent-red/30 bg-accent-red/[.035] px-4 py-4 sm:px-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 gap-3">
-            <AlertIcon className="mt-0.5 h-4 w-4 shrink-0 text-accent-red" />
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-accent-red" />
             <div>
-              <h2 id="fingerprint-heading" className="text-xs font-semibold text-red-100">Circuit analysis unavailable</h2>
-              <p className="mt-1 text-[11px] leading-4 text-red-100/75">{error}</p>
+              <h2 id="fingerprint-heading" className="text-xs font-semibold text-danger-text">Circuit analysis unavailable</h2>
+              <p className="mt-1 text-[11px] leading-4 text-danger-text">{error}</p>
             </div>
           </div>
-          <Button size="sm" variant="secondary" onClick={onRetry}><RefreshIcon className="h-3.5 w-3.5" /> Retry</Button>
+          <Button size="sm" variant="secondary" onClick={onRetry}><RefreshCw className="h-3.5 w-3.5" /> Retry</Button>
         </div>
       </section>
     );

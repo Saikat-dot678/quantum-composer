@@ -1,5 +1,5 @@
 import { BitStringViewer } from "@/components/ui/BitStringViewer";
-import { AlertIcon } from "@/components/ui/icons";
+import { AlertTriangle } from "lucide-react";
 import { Badge, Callout } from "@/components/ui/primitives";
 import { formatPercent } from "@/lib/formatting";
 import type { E91Result } from "@/lib/labTypes";
@@ -67,7 +67,7 @@ export function E91Panel({ result }: { result: E91Result }) {
             <span className="absolute right-0 top-1/2 h-px w-1/4 bg-gradient-to-l from-transparent to-quantum-400/80" aria-hidden="true" />
             <span className="grid h-12 w-12 place-items-center rounded-full border border-quantum-400/55 bg-lab-panel font-mono text-sm text-quantum-400 shadow-[0_0_28px_rgba(167,139,250,.18)]">Ψ⁻</span>
             <p className="mt-2 text-[10px] font-semibold uppercase tracking-[.14em] text-violet-200">pair source</p>
-            {result.eve_enabled && <span className="mt-1 inline-flex items-center gap-1 text-[9px] text-accent-red"><AlertIcon className="h-3 w-3" />product-state substitution model</span>}
+            {result.eve_enabled && <span className="mt-1 inline-flex items-center gap-1 text-[9px] text-accent-red"><AlertTriangle className="h-3 w-3" />product-state substitution model</span>}
           </div>
           <Analyzer actor="Bob" angles={result.bob_angles_deg} counts={bobCounts} tone="green" />
         </div>

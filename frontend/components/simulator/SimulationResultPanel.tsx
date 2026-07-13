@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { formatEngineName, formatInteger } from "@/lib/formatting";
 import type { SimulationV2Response } from "@/lib/labTypes";
-import { AlertIcon, PlayIcon, RefreshIcon } from "@/components/ui/icons";
+import { AlertTriangle, Play, RefreshCw } from "lucide-react";
 import { HistogramPanel } from "../ui/HistogramPanel";
 import { Badge, Button, CopyButton } from "../ui/primitives";
 
@@ -75,15 +75,15 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
         <DockHeader>
           <div>
             <p className="instrument-label text-accent-red">Execution dock</p>
-            <h2 id="result-dock-heading" className="mt-0.5 text-xs font-semibold text-red-100">Run rejected or failed</h2>
+            <h2 id="result-dock-heading" className="mt-0.5 text-xs font-semibold text-danger-text">Run rejected or failed</h2>
           </div>
-          <Button size="sm" variant="secondary" onClick={onRetry}><RefreshIcon className="h-3.5 w-3.5" /> Retry current setup</Button>
+          <Button size="sm" variant="secondary" onClick={onRetry}><RefreshCw className="h-3.5 w-3.5" /> Retry current setup</Button>
         </DockHeader>
         <div className="flex min-h-[13rem] items-start gap-3 px-4 py-5 sm:px-5" role="alert">
-          <AlertIcon className="mt-0.5 h-5 w-5 shrink-0 text-accent-red" />
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-accent-red" />
           <div className="max-w-3xl">
-            <p className="text-sm font-semibold text-red-100">The backend did not produce a result</p>
-            <p className="mt-2 text-xs leading-5 text-red-100/75">{error}</p>
+            <p className="text-sm font-semibold text-danger-text">The backend did not produce a result</p>
+            <p className="mt-2 text-xs leading-5 text-danger-text">{error}</p>
             <p className="mt-3 text-[10px] leading-4 text-lab-faint">Review the selected lane&apos;s rejection reason, memory budget, noise setting, and approximation policy before retrying.</p>
           </div>
         </div>
@@ -99,7 +99,7 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
             <p className="instrument-label">Execution dock</p>
             <h2 id="result-dock-heading" className="mt-0.5 text-xs font-semibold text-lab-text">No run for the current setup</h2>
           </div>
-          <Button size="sm" variant="primary" onClick={onRetry}><PlayIcon className="h-3.5 w-3.5" /> Run simulation</Button>
+          <Button size="sm" variant="primary" onClick={onRetry}><Play className="h-3.5 w-3.5" /> Run simulation</Button>
         </DockHeader>
         <div className="grid min-h-[13rem] place-items-center px-5 py-8 text-center">
           <div>

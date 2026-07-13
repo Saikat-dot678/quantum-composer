@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BitStringViewer } from "@/components/ui/BitStringViewer";
-import { CheckIcon, XIcon } from "@/components/ui/icons";
+import { Check, X } from "lucide-react";
 import { Badge, Callout } from "@/components/ui/primitives";
 import { formatPercent } from "@/lib/formatting";
 import type { B92Result } from "@/lib/labTypes";
@@ -70,7 +70,7 @@ export function B92Panel({ result }: { result: B92Result }) {
             <div className="mx-3 w-16 sm:w-24" aria-hidden="true"><div className={styles.signalTrack} /></div>
             <div className={`flex min-h-[96px] min-w-[160px] flex-col justify-between rounded-xl border p-3 ${selectedError ? "border-accent-red/45 bg-accent-red/[.07]" : conclusive ? "border-accent-green/40 bg-accent-green/[.06]" : "border-lab-borderStrong bg-lab-panel/75"}`}>
               <p className="instrument-label">Logical decision</p>
-              <div className="flex items-end justify-between gap-3"><div><p className={`text-sm font-semibold ${selectedError ? "text-accent-red" : conclusive ? "text-accent-green" : "text-lab-muted"}`}>{conclusive ? `Keep bit ${inferredBit}` : "Discard"}</p><p className="mt-0.5 text-[10px] text-lab-faint">{conclusive ? "one state ruled out" : "neither state ruled out"}</p></div>{conclusive ? <CheckIcon className={`h-5 w-5 ${selectedError ? "text-accent-red" : "text-accent-green"}`} /> : <XIcon className="h-5 w-5 text-lab-faint" />}</div>
+              <div className="flex items-end justify-between gap-3"><div><p className={`text-sm font-semibold ${selectedError ? "text-accent-red" : conclusive ? "text-accent-green" : "text-lab-muted"}`}>{conclusive ? `Keep bit ${inferredBit}` : "Discard"}</p><p className="mt-0.5 text-[10px] text-lab-faint">{conclusive ? "one state ruled out" : "neither state ruled out"}</p></div>{conclusive ? <Check className={`h-5 w-5 ${selectedError ? "text-accent-red" : "text-accent-green"}`} /> : <X className="h-5 w-5 text-lab-faint" />}</div>
             </div>
           </div>
         </div>
@@ -99,8 +99,8 @@ export function B92Panel({ result }: { result: B92Result }) {
           <p className="instrument-label mb-2">Acceptance distribution</p>
           <DistributionBar label="B92 decision outcomes" segments={[
             { label: "inconclusive", value: result.inconclusive_count, className: "bg-lab-borderStrong text-lab-text" },
-            { label: "conclusive", value: result.conclusive_count - result.charts_data.sifted_error_count, className: "bg-accent-cyan text-[#031014]" },
-            { label: "errors", value: result.charts_data.sifted_error_count, className: "bg-accent-red text-[#180607]" },
+            { label: "conclusive", value: result.conclusive_count - result.charts_data.sifted_error_count, className: "bg-accent-cyan text-white" },
+            { label: "errors", value: result.charts_data.sifted_error_count, className: "bg-accent-red text-white" },
           ]} />
           <p className="mt-3 text-[10px] leading-4 text-lab-faint">The conclusive rate is not a monotonic noise indicator in this symmetric bit-flip model; inspect retained QBER for Alice/Bob disagreement.</p>
         </div>

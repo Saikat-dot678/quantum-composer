@@ -6,7 +6,7 @@ import { LAB_PRESETS } from "@/lib/labPresets";
 import { formatEngineName, formatInteger } from "@/lib/formatting";
 import type { CircuitAnalysis, EngineId, EnginesResponse, LabPreset } from "@/lib/labTypes";
 import type { CircuitData } from "@/lib/types";
-import { PlayIcon, RefreshIcon } from "@/components/ui/icons";
+import { Play, RefreshCw } from "lucide-react";
 import {
   Badge,
   Button,
@@ -299,13 +299,13 @@ export function SimulatorControlPanel({
       <div className="border-t border-lab-border bg-lab-panel/95 p-3">
         {runLoading && (
           <p className="mb-2 flex items-center gap-2 text-[10px] leading-4 text-accent-amber">
-            <RefreshIcon className="h-3.5 w-3.5 animate-spin" /> Options are locked while the synchronous backend run is active.
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Options are locked while the synchronous backend run is active.
           </p>
         )}
         <div className="grid grid-cols-2 gap-2">
           <Button variant="secondary" size="sm" loading={analysisLoading} disabled={runLoading} onClick={onAnalyze}>Analyze</Button>
           <Button variant="primary" size="sm" loading={runLoading} disabled={analysisLoading || engineAvailable === false} onClick={onRun}>
-            {!runLoading && <PlayIcon className="h-3.5 w-3.5" />} Run
+            {!runLoading && <Play className="h-3.5 w-3.5" />} Run
           </Button>
         </div>
         <p className="mt-2 text-[9px] leading-4 text-lab-faint">Classical simulation only. No hardware job is submitted.</p>

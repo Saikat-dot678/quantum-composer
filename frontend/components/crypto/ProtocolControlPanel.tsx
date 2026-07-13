@@ -1,4 +1,4 @@
-import { PlayIcon, RefreshIcon } from "@/components/ui/icons";
+import { Play, RefreshCw } from "lucide-react";
 import { Badge, Button, FormField, NumberInput, Panel, Toggle } from "@/components/ui/primitives";
 import { getProtocolDefinition, type Protocol } from "./config";
 
@@ -128,7 +128,7 @@ export function ProtocolControlPanel(props: Props) {
 
       <div className="border-t border-lab-border bg-lab-surface/55 p-3">
         <Button variant="primary" className="w-full" loading={props.busy} onClick={props.onRun}>
-          {!props.busy && (props.stale ? <RefreshIcon className="h-4 w-4" /> : <PlayIcon className="h-4 w-4" />)}
+          {!props.busy && (props.stale ? <RefreshCw className="h-4 w-4" /> : <Play className="h-4 w-4" />)}
           {props.busy ? `Running ${definition.name}` : props.stale ? `Refresh ${definition.name}` : `Run ${definition.name}`}
         </Button>
         <p className="mt-2 text-center text-[9px] leading-3 text-lab-faint">Backend protocol model · no executable URL or user code</p>

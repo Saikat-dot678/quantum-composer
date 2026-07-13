@@ -1,15 +1,15 @@
 "use client";
 
-// Workbench frame: left activity rail (bottom tab bar on narrow screens),
-// sticky console header with live telemetry, route-keyed content, and the
-// global surfaces (command palette, projects drawer). Routes stay thin; this
-// shell derives the active mode from the URL.
-import { useCallback, useEffect, useRef, useState, useMemo, type ReactNode } from "react";
+// Workbench frame: slim top bar (mode switch + global actions), animated
+// route content, and global surfaces (command palette, projects drawer).
+// Routes stay thin; this shell derives the active mode from the URL. Circuit
+// telemetry is no longer global chrome — it lives as a contextual on-canvas
+// chip inside Composer itself (see components/composer/CanvasControls.tsx).
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { usePathname, useRouter } from "next/navigation";
-import { ConsoleHeader } from "@/components/shell/ConsoleHeader";
-import { NavRail } from "@/components/shell/NavRail";
+import { TopBar } from "@/components/shell/TopBar";
 import type { BackendStatus, Mode } from "@/components/shell/types";
-import { analyzeLocally } from "@/lib/feasibility";
 import { labApi } from "@/lib/labApi";
 import { CommandPalette } from "./CommandPalette";
 import { ProjectsDrawer } from "./ProjectsDrawer";
@@ -40,8 +40,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   const noticeShown = useRef(false);
 
   const mode = modeFromPathname(pathname ?? "/composer");
-  const telemetryCircuit = mode === "crypto" ? null : mode === "simulator" ? workspace.labCircuit ?? workspace.circuit : workspace.circuit;
-  const feasibility = useMemo(() => (telemetryCircuit ? analyzeLocally(telemetryCircuit) : null), [telemetryCircuit]);
 
   const checkBackend = useCallback(async (showChecking = true) => {
     const token = ++healthRequest.current;
@@ -84,36 +82,40 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <a href="#main-content" className="fixed left-3 top-3 z-[100] -translate-y-20 rounded-md bg-accent-cyan px-3 py-2 text-sm font-semibold text-lab-bg transition focus:translate-y-0">
+      <a href="#main-content" className="fixed left-3 top-3 z-[100] -translate-y-20 rounded-md bg-accent-600 px-3 py-2 text-sm font-semibold text-white transition focus:translate-y-0">
         Skip to workspace
       </a>
 
-      <div data-workspace-root className="min-h-screen overflow-x-clip pb-16 lg:pb-0 lg:pl-[76px]">
-        <NavRail
+      <div data-workspace-root className="flex min-h-screen flex-col overflow-x-clip">
+        <TopBar
           mode={mode}
           onModeChange={(next) => router.push(MODE_ROUTES[next])}
-          onOpenProjects={() => setProjectsOpen(true)}
-          onOpenPalette={() => setPaletteOpen(true)}
-        />
-
-        <ConsoleHeader
-          mode={mode}
           backendStatus={backendStatus}
           onRetryBackend={() => void checkBackend(true)}
-          feasibility={feasibility}
-          saveState={workspace.saveState}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenProjects={() => setProjectsOpen(true)}
           activeProjectName={workspace.activeProjectName}
+          saveState={workspace.saveState}
         />
 
-        <main id="main-content" tabIndex={-1} className="outline-none">
-          <div key={pathname} className="route-fade">
-            {children}
-          </div>
+        <main id="main-content" tabIndex={-1} className="min-h-0 flex-1 outline-none">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={pathname}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.16, ease: "easeOut" }}
+              className="min-h-full"
+            >
+              {children}
+            </motion.div>
+          </AnimatePresence>
         </main>
 
-        <footer className="border-t border-lab-border bg-lab-surface/65 px-5 py-6 text-center text-xs leading-5 text-lab-faint">
+        <footer className="border-t border-line-hairline bg-surface px-5 py-4 text-center text-[11px] leading-5 text-ink-500">
           <p>Educational simulator · Not affiliated with IBM · No real-hardware execution is configured.</p>
-          <p className="mt-1">Arbitrary 100-qubit statevector simulation is infeasible. Larger circuits are supported only when stabilizer or low-entanglement MPS structure makes them tractable.</p>
+          <p className="mt-0.5">Arbitrary 100-qubit statevector simulation is infeasible. Larger circuits are supported only when stabilizer or low-entanglement MPS structure makes them tractable.</p>
         </footer>
       </div>
 

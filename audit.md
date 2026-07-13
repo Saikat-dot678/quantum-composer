@@ -1247,3 +1247,201 @@ projects save/recents, and palette-registered actions.
   circuit minimap or DOM virtualization — the two-stage cell guard still governs
   large grids.
 - Simulator/Crypto option state still resets on navigation by design.
+
+# Instrument Canvas Rebuild (2026-07-13)
+
+## Why the previous rebuild still looked similar
+
+`docs/frontend-before/*.png`, captured from the Instrument Workbench pass
+immediately before this one, show the exact skeleton diagnosed at the top of
+`docs/FRONTEND_REFERENCE_STUDY.md`: dark-navy background, single cyan accent,
+an eyebrow-label + title header, a horizontal telemetry strip, and — critically
+— **Composer's circuit was still an HTML `<table>`-like grid of `<button>`
+cells**, Simulator Lab's engine comparison was **rows in a bordered list**, and
+Cryptography Lab's protocol flow was **stage cards in a row**. The activity
+rail and console header were new; the actual editing/comparison surfaces were
+not. This pass replaces those three surfaces at the DOM/interaction-model
+level, not just their color tokens.
+
+## Research performed
+
+Documented in full in `docs/FRONTEND_REFERENCE_STUDY.md`: 11 references
+(Linear, Figma, tldraw, Vercel Geist, Excalidraw, Raycast, React Flow, Quirk,
+IBM Quantum Composer, Sentry, Framer), each with a specific screen/workflow,
+the concrete pattern extracted, what was deliberately not copied, and an
+adaptation plan. Selected direction: **"Instrument Canvas"** — a light,
+neutral, single-accent design-tool register (Figma/Framer/tldraw's canvas
+class of product) instead of a dark "sci-fi lab console."
+
+## Structural before/after
+
+`docs/frontend-before/` and `docs/frontend-after/` hold matched screenshots
+for `/composer`, `/simulator`, `/crypto` at 1440×900, 1280×720, and 390×844.
+The before set was re-captured from a clean `git worktree` at the pre-rebuild
+commit after an unrelated mistake (see Errors below) overwrote the first
+capture — it reflects the real prior UI, not a reconstruction.
+
+- **Composer**: DOM grid of `<button>` cells in a 3-column layout →
+  pannable/zoomable **SVG canvas** (`CircuitCanvas.tsx`) with a floating
+  "island" toolbar, a floating gate dock, a bird's-eye minimap, a contextual
+  (empty-until-selected) inspector, and a collapsible bottom code/results dock.
+- **Simulator Lab**: a header + always-expanded row-list of five engine cards
+  → a **memory-scaling SVG chart** (`EngineScalingChart.tsx`, actual
+  16×2ⁿ/16×4ⁿ curves plotted against the run budget and the circuit's qubit
+  count) above a **compact five-lane engine strip** (`EngineStrip.tsx`) that
+  expands exactly one lane's reasoning at a time.
+- **Cryptography Lab**: four "Stage 01–04" cards connected by short lines →
+  an **actor/channel diagram** (`ProtocolDiagram.tsx`): Alice→channel→Bob for
+  BB84/B92 with Eve as a literal interception node on the wire when enabled;
+  Source→Alice/Bob for E91 (its real physical topology, not a linear one); a
+  four-stage pipeline with no second party for QRNG (it has no Alice/Bob at
+  all). All three redraw live as controls change.
+- **Shell**: persistent icon rail + console header → a 56px `TopBar` with a
+  segmented mode switch, backend-status pill, and project/save-state readout.
+
+## React/Next.js capabilities used with observable effect
+
+Route-based workspaces (unchanged, reused); `WorkspaceProvider`/`ToastProvider`
+context; `next/dynamic` for the Bloch sphere (unchanged, reused); a new
+`MotionRoot` (`MotionConfig reducedMotion="user"`) wrapping the whole tree so
+every Framer Motion animation in the app — route fades, drawer/sheet
+enter/exit, the mobile bottom-sheet transitions — respects
+`prefers-reduced-motion` from one place; `ResizeObserver`-driven canvas
+virtualization (only the visible window of a circuit's cells is iterated per
+render, not all of it); URL-backed share-link state (unchanged, reused);
+keyboard event handling for the canvas's single-tab-stop cursor model;
+`useRegisterActions` (unchanged, reused) so Composer/Simulator/Crypto actions
+stay in the command palette without coupling it to any one page.
+
+## Faults found and fixed
+
+- **Click-to-place silently did nothing.** `CircuitCanvas`'s pointer-down
+  handler called `setPointerCapture` unconditionally, which redirects the
+  browser's synthesized `click` to the capturing container — so child `<g
+  onClick>` gate handlers never fired for an ordinary click, only a drag
+  worked. Root-caused via `document.elementFromPoint` + SVG-node counting
+  (confirmed the click hit the right element but no gate appeared), fixed by
+  acquiring capture lazily, only once real pointer movement is detected.
+- **Stale accessibility announcement.** The aria-live region describing the
+  keyboard cursor's cell read the pre-update operation index synchronously
+  right after calling the placement callback, so it announced "empty"
+  immediately after placing a gate. Fixed by driving the announcement from a
+  `useEffect` on the actual `operations` data instead of guessing the outcome
+  — self-corrects for placement, deletion, undo/redo, and keyboard movement
+  alike.
+- **Systemic WCAG contrast failures**, caught by axe, not by eye: `.eyebrow`
+  and `.instrument-label` are unlayered plain CSS rules, so per CSS cascade
+  rules they always beat Tailwind `@layer utilities` classes regardless of
+  source order — every `className="eyebrow text-accent-700"`-style override
+  across the app was silently a no-op. Fixed by wrapping both in `@layer
+  components`. Also fixed: the TopBar's inactive mode-switch text (4.24:1 on
+  its pill background), a Cryptography Lab subtitle sitting directly on
+  `canvas` instead of `surface` (4.47:1), a ProtocolTabs ordinal badge at 80%
+  opacity (3.61:1), and a QRNG diagram whose four pipeline boxes overflowed
+  their own SVG viewBox (clipping the last box).
+- **Dark-theme leftovers that would render actively broken, not just
+  unstyled, on the new light surface**: a hardcoded `bg-[#080d13]` near-black
+  bar in Cryptography Lab, a `conic-gradient` QBER donut using a dark-navy
+  remainder color, and a systemic pattern of pale pastel text
+  (`text-red-100`/`text-emerald-100`/`text-cyan-100`/`text-amber-100`) that
+  made sense as light-text-on-dark-tint in the old theme and became
+  near-invisible light-text-on-near-white in the new one, across seven files
+  including the global `ToastProvider`. Swapped to the semantic `-text`
+  tokens (`danger-text`/`safe-text`/`accent-700`/`warn-text`), each verified
+  ≥ 4.5:1 numerically before applying.
+- **Two dead `boxShadow` utilities** (`shadow-panel`, `shadow-glow`) used
+  across 5 files but never defined in the rebuilt `tailwind.config.ts` —
+  silently rendered no shadow. Added as compatibility entries rather than
+  hunting down every call site.
+- **Accidentally clobbered the BEFORE screenshots.** Running the full
+  Playwright suite without a file filter re-executed a one-off capture
+  utility (`_capture.spec.ts`) with its default output directory, overwriting
+  the untracked `docs/frontend-before/*.png` with the new UI. Recovered by
+  building the pre-rebuild commit in a disposable `git worktree` (nothing
+  from this pass was ever committed, so HEAD still had the exact prior
+  source) and re-capturing there; deleted the capture script afterward so a
+  future full-suite run can't repeat the mistake.
+- **`next build`/`next start` intermittently produced a corrupted
+  `.next`** (`Cannot find module './vendor-chunks/next.js'`) twice during this
+  session. Both times traced to a stray `next dev` process still listening on
+  a nearby port and continuing to write dev-mode artifacts into the same
+  `.next` output directory a concurrent production build was writing to.
+  Fixed by killing the stray process before rebuilding; worth knowing if this
+  recurs — `next dev` and `next build`/`next start` must not run concurrently
+  against the same `.next`.
+
+## Features verified (not re-implemented)
+
+Named projects/recents, compressed share links, the registered-actions
+command palette, and the Bloch sphere/statevector viewer all predate this
+pass (Workspace Platform Redesign, above) and were reused unmodified — this
+pass verified each still works against the rebuilt markup via the test suite
+below rather than assuming the prior report was accurate. One real gap found
+by that verification: the active project name and save state had no home in
+the new `TopBar` (the old console header showed it; the slim replacement
+dropped it). Added a `Project status` readout wired to
+`useWorkspace().activeProjectName`/`saveState`.
+
+## Tests added or rewritten
+
+- `e2e/smoke.spec.ts`: grew from 12 to 17 scenarios. Seven were rewritten
+  because they asserted the old shell/grid contract (`role="grid"`, per-cell
+  `aria-label`s, an activity rail, a "Circuit Composer" heading) that no
+  longer exists; five are new (two-qubit gate placement, reposition via
+  select/delete/re-place, mobile gate-dock/settings bottom sheets, mobile
+  route switching, an explicit offline-state assertion).
+- `e2e/a11y.spec.ts`: unchanged test bodies, all now pass against the rebuilt
+  markup (one required a real fix — see Faults above; one was a test timing
+  issue, scanning the projects drawer mid-fade-in animation, fixed by
+  scanning the settled panel instead of a transition frame).
+- `e2e/visual.spec.ts`: baselines regenerated against the new UI (the old
+  baselines failing was expected and correct — it's the proof the redesign is
+  structurally real, not a false positive to chase).
+- `e2e/backend.spec.ts` (new): five FastAPI-dependent workflow tests — run
+  the default circuit, analyze and see backend-verified feasibility in the
+  inspector, hand off to Simulator Lab, switch engine lanes, and run BB84
+  with Eve enabled and see QBER in the result. Each skips itself (not the
+  file) when the backend isn't reachable at `localhost:8000`, so the rest of
+  the suite stays green without it, matching this project's existing
+  backend-independent-by-default convention.
+- `e2e/helpers.ts`: added `circuitCellPoint`/`clickCircuitCell` (read the
+  canvas's live pan/zoom transform off the DOM and invert it, so a test can
+  click cell (q, t) correctly regardless of `zoomToFit()`'s current state)
+  and `workspaceStatus`/`projectStatus` locators.
+
+## Results
+
+All commands actually run, from `frontend/` unless noted:
+
+- `npm install` — up to date, 382 packages, 0 vulnerabilities requiring action.
+- `npm run typecheck` — clean, exit 0.
+- `npm run lint` (`--max-warnings 0`) — clean, exit 0.
+- `npm run build` — clean, exit 0; 7 pages, 3 route chunks.
+- `npm run test:e2e` (chromium) — **33/33 passed** (5 a11y, 17 smoke, 5
+  backend-dependent, 6 visual).
+- `pytest -q` from `backend/` — **47/47 passed**, untouched by this pass.
+
+## Remaining limitations
+
+- The compatibility layer (`lab-*` color/shadow tokens, `.instrument-label`,
+  `.instrument-panel`, `.lab-grid-bg`) still backs ~40 leaf files (result
+  panels, control rails, output panels) that were re-skinned through it
+  rather than individually rewritten — a deliberate, disclosed trade-off to
+  spend the available time on the three highest-visibility surfaces (canvas
+  editor, engine chart, protocol diagram). They render correctly on the new
+  light system (verified by screenshot and by axe) but don't yet use the new
+  token names directly.
+- No drag-to-reposition for an already-placed gate; moving one is
+  select → delete → place at the new cell, which works but is not a single
+  gesture. Drag-from-dock-to-canvas placement (a new placement, not a move)
+  is implemented.
+- The circuit minimap and mobile Gates/Settings sheets were the two areas
+  found to need iteration after first render (minimap overlapped the mobile
+  toggle buttons under 640px; the mobile sheet's own internal `open` check
+  would have silently disabled `AnimatePresence` exit transitions) — both
+  fixed, but noted since they weren't right on the first pass.
+- Visual regression baselines remain Windows-rendered and CI-skipped, per the
+  pre-existing convention.
+- `e2e/backend.spec.ts` requires a locally running FastAPI backend and is not
+  part of the default CI-safe suite; it was run and verified passing in this
+  session but is not wired into any CI workflow.

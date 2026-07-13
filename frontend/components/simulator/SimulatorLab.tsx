@@ -15,12 +15,13 @@ import type {
   SimulationV2Response,
 } from "@/lib/labTypes";
 import type { CircuitData } from "@/lib/types";
-import { ActivityIcon, PlayIcon } from "@/components/ui/icons";
+import { Activity, Play, RefreshCw } from "lucide-react";
 import { Badge, Button } from "@/components/ui/primitives";
 import { useRegisterActions, type RegisteredAction } from "@/components/workspace/ActionRegistry";
 import { CircuitAnalysisPanel } from "./CircuitAnalysisPanel";
 import { EngineAvailabilityPanel } from "./EngineAvailabilityPanel";
-import { SimulationMethodGuide } from "./SimulationMethodGuide";
+import { EngineScalingChart } from "./EngineScalingChart";
+import { EngineStrip } from "./EngineStrip";
 import { SimulationResultPanel } from "./SimulationResultPanel";
 import { SimulatorControlPanel } from "./SimulatorControlPanel";
 import {
@@ -120,6 +121,7 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
   const [runElapsedMs, setRunElapsedMs] = useState(0);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [mobilePane, setMobilePane] = useState<MobilePane>("engines");
+  const [hoveredLaneId, setHoveredLaneId] = useState<string | null>(null);
   const [notice, setNotice] = useState<SimulatorNotice>({
     kind: "info",
     text: "Circuit analysis starts automatically. Select an engine lane when its evidence matches your goal.",
@@ -456,31 +458,31 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
   useRegisterActions("simulator-lab", actions);
 
   const noticeClass = notice.kind === "error"
-    ? "border-accent-red/30 bg-accent-red/[.045] text-red-100"
+    ? "border-danger-border bg-danger-bg text-danger-text"
     : notice.kind === "success"
-      ? "border-accent-green/25 bg-accent-green/[.04] text-emerald-100"
-      : "border-accent-cyan/20 bg-accent-cyan/[.035] text-cyan-100/85";
+      ? "border-safe-border bg-safe-bg text-safe-text"
+      : "border-accent-100 bg-accent-50 text-accent-700";
   const offline = Boolean(engineError && analysisError);
 
   return (
     <div className="mx-auto max-w-[1920px] px-3 py-3 sm:px-4 lg:px-5">
-      <header className="mb-3 border border-lab-borderStrong bg-lab-panel shadow-panel">
+      <header className="mb-3 overflow-hidden rounded-xl2 border border-line bg-surface shadow-floating">
         <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3 sm:px-5">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="instrument-label text-accent-cyan">Simulator Lab / Analysis workbench</p>
+              <p className="eyebrow text-accent-700">Simulator Lab</p>
               <Badge tone={sourceExpectsRejection ? "red" : "neutral"}>{sourceLabel}</Badge>
             </div>
-            <h1 className="mt-1 font-display text-lg font-semibold tracking-[-0.01em] text-lab-text sm:text-xl">Engine evidence, execution, and diagnostics in one bench</h1>
-            <p className="mt-1 max-w-3xl text-[11px] leading-4 text-lab-muted">Compare methods against the live circuit and selected options, then keep results docked while refining the route.</p>
+            <h1 className="mt-1 font-display text-lg font-semibold tracking-[-0.01em] text-ink-900 sm:text-xl">Engine evidence, execution, and diagnostics in one bench</h1>
+            <p className="mt-1 max-w-3xl text-[11px] leading-4 text-ink-500">Compare methods against the live circuit and selected options, then keep results docked while refining the route.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm" loading={analysisLoading} disabled={runLoading} onClick={() => void requestAnalysis(circuit, true)}><ActivityIcon className="h-3.5 w-3.5" /> Analyze</Button>
-            <Button variant="primary" size="sm" loading={runLoading} disabled={analysisLoading || selectedEngineAvailable === false} onClick={() => void runSimulation()}><PlayIcon className="h-3.5 w-3.5" /> Run {formatEngineName(engine)}</Button>
+            <Button variant="secondary" size="sm" loading={analysisLoading} disabled={runLoading} onClick={() => void requestAnalysis(circuit, true)}><Activity className="h-3.5 w-3.5" /> Analyze</Button>
+            <Button variant="primary" size="sm" loading={runLoading} disabled={analysisLoading || selectedEngineAvailable === false} onClick={() => void runSimulation()}><Play className="h-3.5 w-3.5" /> Run {formatEngineName(engine)}</Button>
           </div>
         </div>
 
-        <div className="flex overflow-x-auto border-t border-lab-border bg-lab-bg/55 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Active simulator telemetry">
+        <div className="flex overflow-x-auto border-t border-line-hairline bg-canvas-dim/50 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Active simulator telemetry">
           {[
             ["Circuit", `${formatInteger(circuit.num_qubits)}q · ${formatInteger(circuit.num_clbits)}c · ${formatInteger(circuit.operations.length)} ops`],
             ["Structure", localAnalysis.isClifford ? "Clifford-compatible" : `non-Clifford · T ${localAnalysis.tCount}`],
@@ -488,9 +490,9 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
             ["Selected route", formatEngineName(engine)],
             ["Run policy", `${formatInteger(maxMemoryMb)} MB · ${noiseEnabled ? "noise" : "ideal"} · ${allowApproximation ? "MPS allowed" : "exact first"}`],
           ].map(([label, value]) => (
-            <div key={label} className="shrink-0 border-r border-lab-border px-3 py-2 last:border-r-0 sm:px-4">
-              <span className="block font-display text-[8px] font-semibold uppercase tracking-[.14em] text-lab-faint">{label}</span>
-              <span className="mt-0.5 block whitespace-nowrap font-mono text-[10px] font-semibold text-lab-text">{value}</span>
+            <div key={label} className="shrink-0 border-r border-line-hairline px-3 py-2 last:border-r-0 sm:px-4">
+              <span className="block font-display text-[8px] font-semibold uppercase tracking-[.14em] text-ink-400">{label}</span>
+              <span className="mt-0.5 block whitespace-nowrap font-mono text-[10px] font-semibold text-ink-900">{value}</span>
             </div>
           ))}
         </div>
@@ -498,30 +500,30 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
         <div className={`border-t px-4 py-2 text-[10px] leading-4 sm:px-5 ${noticeClass}`} role={notice.kind === "error" ? "alert" : "status"} aria-live="polite">
           {notice.text}
         </div>
-        <div className="border-t border-lab-border bg-lab-surface/65 px-4 py-2 text-[9px] leading-4 text-lab-faint sm:px-5">
-          <strong className="text-lab-muted">Technical boundary:</strong> {HONESTY_NOTE} Statevector uses 16 × 2ⁿ bytes; density matrix uses 16 × 4ⁿ. A real QPU is a separate noisy sampling system and is not connected here.
+        <div className="border-t border-line-hairline bg-surface-sunken px-4 py-2 text-[9px] leading-4 text-ink-400 sm:px-5">
+          <strong className="text-ink-700">Technical boundary:</strong> {HONESTY_NOTE} Statevector uses 16 × 2ⁿ bytes; density matrix uses 16 × 4ⁿ. A real QPU is a separate noisy sampling system and is not connected here.
         </div>
       </header>
 
       {offline && (
-        <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-3 border border-accent-red/35 bg-accent-red/[.055] px-4 py-3 text-xs text-red-100">
+        <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl2 border border-danger-border bg-danger-bg px-4 py-3 text-xs text-danger-text">
           <span>The FastAPI analysis and engine catalog are unavailable. Workload selection and saved preferences remain local; execution requires the backend.</span>
-          <Button variant="secondary" size="sm" onClick={() => { void loadEngineCatalog(); void requestAnalysis(circuit, true); }}>Retry backend</Button>
+          <Button variant="secondary" size="sm" onClick={() => { void loadEngineCatalog(); void requestAnalysis(circuit, true); }}><RefreshCw className="h-3.5 w-3.5" /> Retry backend</Button>
         </div>
       )}
 
-      <nav className="mb-3 grid grid-cols-3 gap-1 rounded-lg border border-lab-border bg-lab-surface p-1 xl:hidden" aria-label="Simulator workspace pane">
+      <nav className="mb-3 grid grid-cols-3 gap-1 rounded-lg border border-line bg-surface p-1 xl:hidden" aria-label="Simulator workspace pane">
         {([
           ["source", "Circuits"],
           ["engines", "Engine bench"],
           ["results", runLoading ? "Running…" : result ? "Results" : "Run dock"],
         ] as const).map(([id, label]) => (
-          <button key={id} type="button" aria-pressed={mobilePane === id} onClick={() => setMobilePane(id)} className={`min-h-9 rounded-md px-2 text-[11px] font-semibold transition ${mobilePane === id ? "bg-lab-raised text-accent-cyan" : "text-lab-faint"}`}>{label}</button>
+          <button key={id} type="button" aria-pressed={mobilePane === id} onClick={() => setMobilePane(id)} className={`min-h-9 rounded-md px-2 text-[11px] font-semibold transition ${mobilePane === id ? "bg-accent-50 text-accent-700" : "text-ink-400"}`}>{label}</button>
         ))}
       </nav>
 
-      <div className="overflow-hidden border border-lab-borderStrong bg-lab-panel shadow-panel xl:grid xl:h-[calc(100vh-11rem)] xl:min-h-[38rem] xl:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className={`${mobilePane === "source" ? "flex" : "hidden"} min-h-[32rem] flex-col border-r-0 border-lab-borderStrong xl:flex xl:min-h-0 xl:border-r`} aria-label="Circuit sources and run options">
+      <div className="xl:grid xl:h-[calc(100vh-11rem)] xl:min-h-[42rem] xl:grid-cols-[260px_minmax(0,1fr)] xl:gap-3">
+        <aside className={`${mobilePane === "source" ? "flex" : "hidden"} min-h-[32rem] flex-col overflow-hidden rounded-xl2 border border-line bg-surface shadow-floating xl:flex xl:min-h-0`} aria-label="Circuit sources and run options">
           <SimulatorControlPanel
             circuit={circuit}
             composerCircuit={composerCircuit}
@@ -556,10 +558,9 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
           <EngineAvailabilityPanel engines={engines} loading={engineLoading} error={engineError} onRetry={() => void loadEngineCatalog()} />
         </aside>
 
-        <main className="min-w-0 xl:grid xl:min-h-0 xl:grid-rows-[minmax(0,1fr)_minmax(17rem,40vh)]">
-          <div className={`${mobilePane === "engines" ? "block" : "hidden"} min-w-0 xl:block xl:min-h-0 xl:overflow-y-auto`}>
-            <CircuitAnalysisPanel analysis={analysis} loading={analysisLoading} error={analysisError} engines={engines} runMemoryMb={maxMemoryMb} onRetry={() => void requestAnalysis(circuit, true)} />
-            <SimulationMethodGuide
+        <main className="mt-3 min-w-0 xl:mt-0 xl:grid xl:min-h-0 xl:grid-rows-[minmax(0,1fr)_minmax(14rem,26vh)] xl:gap-3">
+          <div className={`${mobilePane === "engines" ? "block" : "hidden"} min-w-0 space-y-3 xl:block xl:min-h-0 xl:overflow-y-auto`}>
+            <EngineStrip
               analysis={analysis}
               engines={engines}
               selectedEngine={engine}
@@ -568,10 +569,20 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
               allowApproximation={allowApproximation}
               disabled={runLoading}
               onSelectEngine={updateEngine}
+              onHoverLane={setHoveredLaneId}
             />
+            <EngineScalingChart
+              numQubits={analysis?.num_qubits ?? circuit.num_qubits}
+              maxMemoryMb={maxMemoryMb}
+              isClifford={analysis?.is_clifford ?? null}
+              highlightLaneId={hoveredLaneId}
+            />
+            <div className="overflow-hidden rounded-xl2 border border-line bg-surface shadow-floating">
+              <CircuitAnalysisPanel analysis={analysis} loading={analysisLoading} error={analysisError} engines={engines} runMemoryMb={maxMemoryMb} onRetry={() => void requestAnalysis(circuit, true)} />
+            </div>
           </div>
 
-          <div className={`${mobilePane === "results" ? "block" : "hidden"} min-w-0 xl:block xl:min-h-0 xl:overflow-hidden`}>
+          <div className={`${mobilePane === "results" ? "block" : "hidden"} mt-3 min-w-0 overflow-hidden rounded-xl2 border border-line bg-surface shadow-floating xl:mt-0 xl:block xl:min-h-0`}>
             <SimulationResultPanel result={result} loading={runLoading} error={runError} elapsedMs={runElapsedMs} onRetry={() => void runSimulation()} />
           </div>
         </main>

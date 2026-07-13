@@ -40,6 +40,11 @@ test("axe: command palette overlay", async ({ page }) => {
 test("axe: projects drawer overlay", async ({ page }) => {
   await page.goto("/composer");
   await openProjectsDrawer(page);
+  // Scan the settled panel, not a mid-fade animation frame: the entrance
+  // animation briefly composites the panel at partial opacity over the dark
+  // backdrop, which transiently (and correctly, per CSS) lowers contrast for
+  // ~200ms. Reduced-motion users never see it (animation is disabled).
+  await page.waitForTimeout(300);
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])
     .analyze();

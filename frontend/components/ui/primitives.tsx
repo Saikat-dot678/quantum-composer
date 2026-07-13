@@ -10,6 +10,15 @@ import {
 } from "react";
 import { AlertIcon, CheckIcon, CopyIcon, InfoIcon } from "./icons";
 
+// Shared vocabulary for the "Instrument Canvas" system (see
+// docs/FRONTEND_REFERENCE_STUDY.md). Every export here keeps its previous
+// name and prop shape on purpose: dozens of Simulator Lab / Cryptography Lab /
+// output-panel components consume these primitives, and re-skinning this one
+// file propagates the new light/neutral/indigo visual system to all of them
+// without touching each call site. Legacy tone keys (`cyan`/`green`/`amber`/
+// `red`/`violet`) are kept and re-mapped onto the new semantic palette
+// (accent/safe/warn/danger/quantum) so no caller needs to change.
+
 export function cx(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
@@ -24,7 +33,7 @@ export function Panel({
   as?: "section" | "div" | "aside" | "article";
 }) {
   return (
-    <Tag className={cx("instrument-panel rounded-xl border border-lab-border bg-lab-panel shadow-panel", className)}>
+    <Tag className={cx("rounded-xl2 border border-line bg-surface shadow-island", className)}>
       {children}
     </Tag>
   );
@@ -44,9 +53,9 @@ export function SectionHeader({
   return (
     <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
-        {eyebrow && <p className="instrument-label text-accent-cyan/80">{eyebrow}</p>}
-        <h2 className={cx("font-display text-lg font-semibold tracking-[-0.01em] text-lab-text", eyebrow && "mt-1")}>{title}</h2>
-        {description && <div className="mt-1 max-w-2xl text-xs leading-5 text-lab-muted">{description}</div>}
+        {eyebrow && <p className="eyebrow text-accent-600">{eyebrow}</p>}
+        <h2 className={cx("font-display text-lg font-semibold tracking-[-0.01em] text-ink-900", eyebrow && "mt-1")}>{title}</h2>
+        {description && <div className="mt-1 max-w-2xl text-xs leading-5 text-ink-500">{description}</div>}
       </div>
       {right}
     </div>
@@ -56,10 +65,10 @@ export function SectionHeader({
 export type ButtonVariant = "primary" | "secondary" | "quiet" | "danger";
 
 const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
-  primary: "border-accent-cyan bg-accent-cyan text-[#031014] shadow-signal hover:bg-cyan-300",
-  secondary: "border-lab-borderStrong bg-lab-raised text-lab-text hover:border-accent-cyan/50 hover:text-white",
-  quiet: "border-transparent bg-transparent text-lab-muted hover:bg-lab-raised hover:text-lab-text",
-  danger: "border-accent-red/50 bg-accent-red/10 text-red-200 hover:bg-accent-red/20",
+  primary: "border-accent-600 bg-accent-600 text-white shadow-sm hover:bg-accent-700",
+  secondary: "border-line-strong bg-surface text-ink-900 hover:border-accent-500 hover:text-accent-700",
+  quiet: "border-transparent bg-transparent text-ink-500 hover:bg-ink-100 hover:text-ink-900",
+  danger: "border-danger-border bg-danger-bg text-danger-text hover:bg-red-100",
 };
 
 export function Button({
@@ -94,12 +103,12 @@ export function Button({
 }
 
 const TONES = {
-  slate: "text-lab-text",
-  cyan: "text-accent-cyan",
-  green: "text-accent-green",
-  amber: "text-accent-amber",
-  red: "text-accent-red",
-  violet: "text-quantum-400",
+  slate: "text-ink-900",
+  cyan: "text-accent-600",
+  green: "text-safe-text",
+  amber: "text-warn-text",
+  red: "text-danger-text",
+  violet: "text-quantum-text",
 } as const;
 
 export function StatTile({
@@ -114,10 +123,10 @@ export function StatTile({
   hint?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-lg border border-lab-border bg-lab-raised/55 px-3 py-2.5">
-      <p className="instrument-label truncate">{label}</p>
-      <p className={cx("mt-1 truncate font-mono text-sm font-semibold", TONES[tone as keyof typeof TONES] ?? "text-lab-text")}>{value}</p>
-      {hint && <p className="mt-1 text-[11px] leading-4 text-lab-faint">{hint}</p>}
+    <div className="min-w-0 rounded-lg border border-line-hairline bg-surface-sunken px-3 py-2.5">
+      <p className="eyebrow truncate">{label}</p>
+      <p className={cx("mt-1 truncate font-mono text-sm font-semibold", TONES[tone as keyof typeof TONES] ?? "text-ink-900")}>{value}</p>
+      {hint && <p className="mt-1 text-[11px] leading-4 text-ink-500">{hint}</p>}
     </div>
   );
 }
@@ -125,12 +134,12 @@ export function StatTile({
 export type BadgeTone = "cyan" | "green" | "amber" | "red" | "violet" | "neutral";
 
 const BADGE_TONES: Record<BadgeTone, string> = {
-  cyan: "border-accent-cyan/40 bg-accent-cyan/10 text-accent-cyan",
-  green: "border-accent-green/40 bg-accent-green/10 text-accent-green",
-  amber: "border-accent-amber/40 bg-accent-amber/10 text-accent-amber",
-  red: "border-accent-red/40 bg-accent-red/10 text-accent-red",
-  violet: "border-quantum-400/40 bg-quantum-400/10 text-quantum-400",
-  neutral: "border-lab-borderStrong bg-lab-raised text-lab-muted",
+  cyan: "border-accent-100 bg-accent-50 text-accent-700",
+  green: "border-safe-border bg-safe-bg text-safe-text",
+  amber: "border-warn-border bg-warn-bg text-warn-text",
+  red: "border-danger-border bg-danger-bg text-danger-text",
+  violet: "border-quantum-border bg-quantum-bg text-quantum-text",
+  neutral: "border-line-strong bg-ink-100 text-ink-700",
 };
 
 export function Badge({
@@ -139,15 +148,17 @@ export function Badge({
   title,
   dot = false,
   className,
+  "aria-label": ariaLabel,
 }: {
   tone?: BadgeTone;
   children: ReactNode;
   title?: string;
   dot?: boolean;
   className?: string;
+  "aria-label"?: string;
 }) {
   return (
-    <span title={title} className={cx("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold leading-none", BADGE_TONES[tone], className)}>
+    <span title={title} aria-label={ariaLabel} className={cx("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold leading-none", BADGE_TONES[tone], className)}>
       {dot && <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />}
       {children}
     </span>
@@ -164,10 +175,10 @@ export function Callout({
   title?: string;
 }) {
   const styles = {
-    info: "border-accent-cyan/25 bg-accent-cyan/[.055] text-cyan-100/90",
-    warning: "border-accent-amber/30 bg-accent-amber/[.065] text-amber-100",
-    danger: "border-accent-red/35 bg-accent-red/[.07] text-red-100",
-    success: "border-accent-green/30 bg-accent-green/[.06] text-emerald-100",
+    info: "border-accent-100 bg-accent-50 text-accent-700",
+    warning: "border-warn-border bg-warn-bg text-warn-text",
+    danger: "border-danger-border bg-danger-bg text-danger-text",
+    success: "border-safe-border bg-safe-bg text-safe-text",
   };
   const Icon = tone === "danger" || tone === "warning" ? AlertIcon : tone === "success" ? CheckIcon : InfoIcon;
   return (
@@ -214,7 +225,7 @@ export function CopyButton({ text, className = "", label = "Copy" }: { text: str
           window.setTimeout(() => setState("idle"), 1600);
         }
       }}
-      className={cx("inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-[11px] font-semibold text-accent-cyan transition hover:bg-accent-cyan/10 hover:text-cyan-200", className)}
+      className={cx("inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-[11px] font-semibold text-accent-600 transition hover:bg-accent-50", className)}
     >
       {state === "copied" ? <CheckIcon className="h-3.5 w-3.5" /> : <CopyIcon className="h-3.5 w-3.5" />}
       <span aria-live="polite">{state === "copied" ? "Copied" : state === "failed" ? "Unavailable" : label}</span>
@@ -224,8 +235,8 @@ export function CopyButton({ text, className = "", label = "Copy" }: { text: str
 
 export function Spinner({ label = "Working" }: { label?: string }) {
   return (
-    <div role="status" aria-live="polite" className="flex items-center justify-center gap-3 py-10 text-sm text-lab-muted">
-      <span className="h-5 w-5 animate-spin rounded-full border-2 border-lab-borderStrong border-t-accent-cyan" aria-hidden="true" />
+    <div role="status" aria-live="polite" className="flex items-center justify-center gap-3 py-10 text-sm text-ink-500">
+      <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-accent-600" aria-hidden="true" />
       <span>{label}</span>
     </div>
   );
@@ -233,10 +244,10 @@ export function Spinner({ label = "Working" }: { label?: string }) {
 
 export function EmptyState({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
   return (
-    <div className="flex min-h-40 flex-col items-center justify-center rounded-lg border border-dashed border-lab-borderStrong bg-lab-surface/40 px-6 py-8 text-center">
-      <span className="mb-3 h-2 w-16 rounded-full bg-lab-borderStrong" aria-hidden="true" />
-      <p className="text-sm font-semibold text-lab-text">{title}</p>
-      <p className="mt-1 max-w-md text-xs leading-5 text-lab-muted">{description}</p>
+    <div className="flex min-h-40 flex-col items-center justify-center rounded-lg border border-dashed border-line-strong bg-surface-sunken px-6 py-8 text-center">
+      <span className="mb-3 h-2 w-16 rounded-full bg-ink-200" aria-hidden="true" />
+      <p className="text-sm font-semibold text-ink-900">{title}</p>
+      <p className="mt-1 max-w-md text-xs leading-5 text-ink-500">{description}</p>
       {action && <div className="mt-4">{action}</div>}
     </div>
   );
@@ -244,12 +255,12 @@ export function EmptyState({ title, description, action }: { title: string; desc
 
 export function ErrorState({ title = "Request failed", message, action }: { title?: string; message: string; action?: ReactNode }) {
   return (
-    <div role="alert" className="rounded-lg border border-accent-red/35 bg-accent-red/[.07] p-4">
+    <div role="alert" className="rounded-lg border border-danger-border bg-danger-bg p-4">
       <div className="flex gap-3">
-        <AlertIcon className="mt-0.5 h-4 w-4 shrink-0 text-accent-red" />
+        <AlertIcon className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
         <div>
-          <p className="text-sm font-semibold text-red-100">{title}</p>
-          <p className="mt-1 text-xs leading-5 text-red-100/75">{message}</p>
+          <p className="text-sm font-semibold text-danger-text">{title}</p>
+          <p className="mt-1 text-xs leading-5 text-danger-text/80">{message}</p>
           {action && <div className="mt-3">{action}</div>}
         </div>
       </div>
@@ -270,14 +281,14 @@ export function FormField({
 }) {
   return (
     <div>
-      <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-medium text-lab-muted">{label}</label>
+      <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-medium text-ink-500">{label}</label>
       {children}
-      {hint && <p className="mt-1.5 text-[11px] leading-4 text-lab-faint">{hint}</p>}
+      {hint && <p className="mt-1.5 text-[11px] leading-4 text-ink-500">{hint}</p>}
     </div>
   );
 }
 
-export const inputClassName = "min-h-10 w-full rounded-lg border border-lab-borderStrong bg-lab-bg px-3 py-2 text-sm text-lab-text outline-none transition placeholder:text-lab-faint focus:border-accent-cyan focus:ring-2 focus:ring-accent-cyan/15 disabled:cursor-not-allowed disabled:opacity-50";
+export const inputClassName = "min-h-10 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink-900 outline-none transition placeholder:text-ink-500 focus:border-accent-500 focus:ring-2 focus:ring-accent-100 disabled:cursor-not-allowed disabled:opacity-50";
 
 export function NumberInput({ label, hint, id, className, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: ReactNode; hint?: ReactNode; id?: string }) {
   const generated = useId();
@@ -293,12 +304,12 @@ export function SelectField({ label, hint, id, className, children, ...props }: 
 
 export function Toggle({ checked, onChange, label, description, disabled = false }: { checked: boolean; onChange: (checked: boolean) => void; label: string; description?: string; disabled?: boolean }) {
   return (
-    <label className={cx("flex cursor-pointer items-start gap-3 rounded-lg border border-lab-border bg-lab-raised/40 p-3", disabled && "cursor-not-allowed opacity-50")}>
+    <label className={cx("flex cursor-pointer items-start gap-3 rounded-lg border border-line-hairline bg-surface-sunken p-3", disabled && "cursor-not-allowed opacity-50")}>
       <input type="checkbox" className="peer sr-only" checked={checked} onChange={(event) => onChange(event.target.checked)} disabled={disabled} />
-      <span className="relative mt-0.5 h-5 w-9 shrink-0 rounded-full bg-lab-borderStrong transition peer-checked:bg-accent-cyan/70 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-cyan peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-lab-panel after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-lab-text after:transition-transform peer-checked:after:translate-x-4" aria-hidden="true" />
+      <span className="relative mt-0.5 h-5 w-9 shrink-0 rounded-full bg-ink-300 transition peer-checked:bg-accent-600 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-surface after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:after:translate-x-4" aria-hidden="true" />
       <span className="min-w-0">
-        <span className="block text-xs font-semibold text-lab-text">{label}</span>
-        {description && <span className="mt-0.5 block text-[11px] leading-4 text-lab-faint">{description}</span>}
+        <span className="block text-xs font-semibold text-ink-900">{label}</span>
+        {description && <span className="mt-0.5 block text-[11px] leading-4 text-ink-500">{description}</span>}
       </span>
     </label>
   );
@@ -308,7 +319,7 @@ export function Tooltip({ content, children }: { content: ReactNode; children: R
   return (
     <span className="group/tooltip relative inline-flex">
       {children}
-      <span role="tooltip" className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-50 hidden w-max max-w-64 -translate-x-1/2 rounded-md border border-lab-borderStrong bg-[#05080d] px-2.5 py-1.5 text-center text-[11px] font-normal leading-4 text-lab-text shadow-panel group-hover/tooltip:block group-focus-within/tooltip:block">
+      <span role="tooltip" className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-50 hidden w-max max-w-64 -translate-x-1/2 rounded-md border border-line-strong bg-ink-900 px-2.5 py-1.5 text-center text-[11px] font-normal leading-4 text-white shadow-floating group-hover/tooltip:block group-focus-within/tooltip:block">
         {content}
       </span>
     </span>

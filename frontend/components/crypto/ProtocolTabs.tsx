@@ -57,7 +57,7 @@ export function ProtocolTabs({ protocol, onChange, disabled = false }: { protoco
                 <span className={`block font-display text-sm font-semibold ${active ? "text-accent-cyan" : "text-lab-text"}`}>{item.name}</span>
                 <span className="mt-0.5 block text-[10px] leading-4 text-lab-faint">{item.shortLabel}</span>
               </span>
-              <span className={`font-mono text-[10px] ${active ? "text-accent-cyan/80" : "text-lab-faint"}`}>{String(index + 1).padStart(2, "0")}</span>
+              <span className={`font-mono text-[10px] ${active ? "text-accent-cyan" : "text-lab-faint"}`}>{String(index + 1).padStart(2, "0")}</span>
             </span>
             <span className={`absolute inset-x-3.5 bottom-0 h-px ${active ? "bg-gradient-to-r from-accent-cyan via-accent-cyan/70 to-transparent" : "bg-transparent"}`} aria-hidden="true" />
           </button>
