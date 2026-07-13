@@ -133,7 +133,7 @@ test("circuit canvas supports arrow-key cursor navigation with an accessible liv
 
 test("live state preview shows Bell amplitudes and the Bloch sphere for 1 qubit", async ({ page }) => {
   await page.goto("/composer");
-  const preview = page.locator("section", { has: page.getByRole("heading", { name: "Live state preview" }) });
+  const preview = page.locator("section", { has: page.getByRole("heading", { name: "Live ideal preview" }) });
   await expect(preview).toBeVisible();
   await expect(preview).toContainText("|00⟩");
   await expect(preview).toContainText("|11⟩");

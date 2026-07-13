@@ -55,6 +55,36 @@ can honestly go next.
   key/correlation views, QBER/CHSH, QRNG bias diagnostics, and educational
   boundaries.
 
+### Post-simulation quantum-state analysis and viewers
+
+- `POST /circuit/simulate-v2` can optionally return the actual backend-computed
+  state for the run (`include_state_analysis` and related options) — a typed,
+  versioned `state_analysis` object, not a re-labeled copy of Composer's local
+  preview. See [ARCHITECTURE.md](ARCHITECTURE.md) and
+  [SIMULATION_ENGINES.md](SIMULATION_ENGINES.md) for the full pipeline and
+  per-engine support matrix.
+- **Statevector viewer**: amplitudes, probabilities, and phases (Dirac
+  notation, a probability table with per-qubit marginals, a phase wheel with
+  an always-paired numeric table) for `aer_statevector`/`aer_mps` results, up
+  to a documented qubit ceiling.
+- **Bloch sphere** for exact-simulable circuits, now driven by the real
+  backend result: one sphere per qubit's own reduced state (a qubit selector,
+  not one global sphere for a multi-qubit state), with an explicit
+  explanation of why a reduced state is mixed when it is. The Bell-state
+  regression (each qubit's reduced Bloch vector at the origin while the
+  global two-qubit state stays pure and maximally entangled) is covered by
+  both a backend unit test and a Playwright screenshot baseline.
+- **Density matrix viewer** for small noisy circuits: trace, purity, entropy,
+  Hermiticity error, a bounded magnitude heatmap with an accessible table
+  fallback, and diagonal basis-state probabilities.
+- **Entanglement view**: two-qubit concurrence, Schmidt coefficients and
+  entanglement entropy per bipartition, and per-qubit reduced purity — with
+  an explicit disclaimer that this is not a complete entanglement
+  classification for arbitrary mixed, multipartite states.
+- Export (JSON with full metadata, CSV of the amplitude/probability table)
+  and an explicit local-preview-vs-backend-result comparison action in
+  Composer, both manual, never run automatically on edit.
+
 ## Future (not yet built)
 
 ### Execution & realism
@@ -63,12 +93,14 @@ can honestly go next.
   (credentials stay server-side; explicit authorization, job polling, quotas).
 - **Real backend noise models** imported from device calibration data.
 - **Transpiler visualization** and **coupling-map visualization**.
-
-### Viewers (small circuits only)
-
-- **Statevector viewer** and **Bloch sphere** (1-qubit) for exact-simulable
-  circuits.
-- **Density matrix viewer** for small noisy circuits.
+- A native fix for the Composer→Simulator-Lab custom-gate handoff race
+  discovered while integrating state analysis (see `audit.md`'s "Custom-gate
+  integration" section) — a circuit containing a custom gate, handed to
+  Simulator Lab via the toolbar button, can currently reach the backend
+  unresolved and be honestly rejected (422) rather than analyzed.
+- A NumPy-compatible `.npy`/`.npz` state export (JSON/CSV exist today).
+- Direct reduced-state extraction from MPS tensors, avoiding the full
+  statevector conversion Aer's public API currently requires.
 
 ### Cryptography
 

@@ -1769,3 +1769,504 @@ All commands actually run:
   hand-off from Composer was hardened.
 - No changes are committed — everything in this section is present in the
   working tree, pending review.
+
+# Backend Quantum-State Analysis and Post-Processing (2026-07-13)
+
+## Audit: what exists before this pass
+
+**What the local live preview calculates.** `frontend/lib/statevector.ts`'s
+`computeStatePreview()` is a small hand-rolled statevector simulator that
+runs entirely in the browser: it starts at `|0...0>`, applies each
+operation's ideal unitary matrix directly to a `Float64Array` pair
+(re/im), and returns amplitudes/probabilities/phases plus a 1-qubit Bloch
+vector when `num_qubits === 1`. It is capped at `MAX_PREVIEW_QUBITS = 5`
+(32 amplitudes), silently *ignores* `measure`/`barrier` operations (shows
+the pre-measurement state unconditionally — there is no other kind of
+state it could show, since it never touches the backend), and — as of the
+custom-gate work above — resolves "custom" operations first via
+`resolveCustomOperations()` so it never silently mis-simulates a custom
+gate. It is wired into `StatePreviewPanel.tsx`, which is mounted only
+inside Composer's `CircuitInspector.tsx`. It updates on every keystroke
+(a `useMemo` keyed on the live circuit) and has never made a network call.
+
+**What the backend currently returns.** `SimulationV2Response`
+(`backend/schemas.py`) is `counts, depth, gate_counts, selected_engine,
+engine_reason, warnings, resource_estimate, timing_ms, diagram, metadata`.
+Every engine (`engines/aer_statevector.py`, `aer_mps.py`, `aer_density.py`,
+`aer_stabilizer.py`, `engines/stim_stabilizer.py`) calls Qiskit Aer or Stim
+purely for **sampled counts** — none of them insert a `save_statevector`
+(or equivalent) instruction, none of them ever touch `Statevector`,
+`DensityMatrix`, or `StabilizerState` objects, and no code path anywhere in
+the backend serializes a complex amplitude to JSON. `diagram` is a
+*textual* Qiskit circuit diagram (ASCII gate layout), not a state
+visualization. V1's `/circuit/simulate` (`simulator.py`) is the same story:
+counts only.
+
+**Why the current Bloch sphere is not a backend result visualization.**
+`BlochSphere3D.tsx` is a pure, source-agnostic `{x, y, z} -> SVG`
+renderer — it has no opinion about where its vector comes from and already
+correctly draws a shortened vector for `|vector| < 1` (verified by reading
+its `toScreen()`/`rotate()` math: it scales `x, y, z` directly by `RADIUS`
+with no re-normalization step, so a mixed-state vector already lands
+*inside* the sphere without any change to this component). The problem is
+entirely upstream: its only caller, `StatePreviewPanel.tsx`, only ever
+feeds it the local browser-side preview's Bloch vector. There is no code
+path from an actual `/circuit/simulate-v2` response to this component at
+all — Simulator Lab's `SimulationResultPanel.tsx` has three tabs
+(Distribution / Diagnostics / Diagram) and none of them touch
+`BlochSphere3D` or any state math. So "the Bloch sphere is only driven by
+local preview" is exactly correct: it's not that the backend result is
+being mislabeled as a state — the backend result and the Bloch sphere are
+simply never connected.
+
+**Which engines can return meaningful state information, and how, verified
+empirically (not assumed) before writing any engine code:**
+
+| Engine | Save instruction | Verified result |
+| --- | --- | --- |
+| `aer_statevector` | `circuit.save_statevector(label=...)` | Exact `Statevector`, confirmed correct for a Bell state (`[0.707, 0, 0, 0.707]`) inserted *before* measurement in the same circuit and shot-sampling run that also produces `counts` — one execution, both outputs. |
+| `aer_mps` | `circuit.save_statevector(label=...)` | Works identically (Aer converts the MPS tensor chain to a full statevector internally) — this is exactly the "huge MPS-to-statevector conversion" the standing instructions warn against, so it must be **qubit-gated**, not used unconditionally. `save_matrix_product_state()` also exists and returns the raw tensor chain without conversion, but computing reduced single-qubit states directly from raw MPS tensors (avoiding the O(2^n) conversion) is a nontrivial tensor-network computation of its own; deferred (see Remaining limitations) in favor of the qubit-gated full-statevector path, which the standing instructions explicitly permit ("report that full state visualization is unavailable" above a safe threshold). |
+| `aer_density_matrix` | `circuit.save_density_matrix(label=...)` | Exact `DensityMatrix`, confirmed trace ≈ 1 and purity < 1 for a noisy Bell-like circuit (0.951, correctly reflecting the injected depolarizing noise). |
+| `aer_stabilizer` | `circuit.save_stabilizer(label=...)` | A `StabilizerState`; `state.clifford.to_labels(mode="S")` gives clean Pauli-string generators (verified: `['+XX', '+ZZ']` for a Bell state) — a textual stabilizer summary, never a full amplitude vector. |
+| `stim_stabilizer` | *(no save instruction in Stim's batch-sampling API)* | A **second**, separate `stim.TableauSimulator` pass over the same gate sequence gives the identical generator form (verified: also `['+XX', '+ZZ']`). Stabilizer tracking is polynomial-time even at huge qubit counts, so this second pass is cheap, not a "duplicate expensive simulation" concern. |
+
+**Limitations caused by measurement, noise, and large systems.**
+Measurement: today's schema has no reset/conditional/mid-circuit-branching
+gate at all — `measure` is the *only* non-unitary operation that exists —
+so "does this circuit have a well-defined single pre-measurement pure
+state" reduces exactly to "does any non-barrier operation touch a qubit
+*after* that qubit's own measurement." That is implementable precisely and
+statically from the operation list; anything that fails it must report
+unavailability rather than guess. Noise: only `aer_density_matrix` models
+noise, and a density matrix is the only honest representation of a mixed
+state — converting it to a fake pure statevector was an explicit
+non-goal. Large systems: exact full-statevector/density-matrix
+materialization is exponential regardless of which engine reports it, so
+every extraction path below is qubit-gated by named, documented constants,
+independent of whatever the *simulation* itself was able to handle
+(a circuit can be simulable via MPS/stabilizer at large scale while still
+being unsafe to visualize as a full state).
+
+## State semantics chosen
+
+Three, and only three, states a returned result can be in, each with an
+honest label carried in `state_analysis.semantic_point`:
+
+- **`final_state`** — the circuit has no measurement at all; the returned
+  state is the actual final state of the actual submitted circuit, exact
+  (statevector/density-matrix engines) or a structured summary (stabilizer
+  engines). Nothing was stripped or substituted.
+- **`pre_measurement_state`** — the circuit's own measurements are all
+  *terminal* (structurally verified, see below): a separate, measurement-free
+  analysis copy of the same validated circuit is built and evaluated up to
+  that point. The circuit that actually produces `counts` is a different
+  execution of the *original*, still-measured circuit — the analysis copy
+  never replaces or influences the sampled counts.
+- **`mixed_final_state`** — density-matrix engine, no measurement present;
+  distinguished from `final_state` only to make it explicit at the schema
+  level that "final" here already means "this engine's own native mixed-state
+  representation," not "a pure state that happens to look mixed."
+- **Unavailable** (`available: false`, `unavailable_reason` set) — anything
+  that doesn't fit the above, chiefly a circuit with a genuine *mid-circuit*
+  measurement (a non-barrier operation touching a qubit after that qubit's
+  own most recent measurement). No deterministic single quantum state exists
+  for such a circuit in general, so no state is fabricated; the reason string
+  names exactly why.
+
+This is a closed classification, not a heuristic: every request either lands
+in one of the first three buckets by construction, or is explicitly refused.
+
+## API and schema changes
+
+**Decision: embedded in `/circuit/simulate-v2`, not a dedicated endpoint.**
+Rationale: state analysis is only ever meaningful in the context of one
+specific simulation run (the same engine, the same resolved circuit, the same
+noise/shot configuration) — a separate `/circuit/state-analysis` endpoint
+would either have to re-run the simulation itself (duplicating engine
+selection/execution, and risking the analysis silently describing a
+*different* run than the one whose counts the user is looking at) or require
+the client to somehow reference a prior run's server-side state, which this
+application has no session/job store for and was not asked to add. Embedding
+keeps "one request, one engine execution, one consistent set of outputs" true
+exactly as it already was for `counts`/`diagram`/`resource_estimate`.
+
+**Request** (`SimulationOptions`, all new fields optional, default
+lightweight): `include_state_analysis: bool = False`, `state_detail:
+"summary" | "top_amplitudes" | "full" = "summary"`, `include_density_matrix:
+bool = False`, `max_returned_amplitudes: int = 64` (1–4096), `top_k_states:
+int = 16` (1–200). An ordinary V2 request that omits all five behaves
+identically to before this work — confirmed by
+`test_state_analysis_absent_by_default`.
+
+**Response** (`SimulationV2Response.state_analysis: Optional[StateAnalysisResponse]
+= None`): a single typed, versioned-by-construction object (adding fields to
+it later is additive and backward compatible; nothing about its shape is
+inferred from untyped dicts client-side). Top-level fields: `available,
+representation, source_engine, semantic_point, qubit_order, num_qubits,
+normalized, normalization_error, amplitudes, density_matrix,
+basis_probabilities, top_states, per_qubit, entanglement, global_metrics,
+warnings, unavailable_reason`. `representation` is one of `"statevector" |
+"density_matrix" | "stabilizer_summary"`. Every complex number is `{re: float,
+im: float}` JSON — a raw Python/JS complex or tuple is never serialized.
+`qubit_order` is always the literal string `"qiskit_little_endian_q0_lsb"`:
+qubit 0 is the least-significant bit, i.e. the *rightmost* character of a
+basis-label string (`format(index, f"0{n}b")`) — the same convention
+`frontend/lib/statevector.ts`'s local preview already used, so the two never
+silently disagree about which physical qubit a given bit position means.
+
+TypeScript mirrors (`frontend/lib/labTypes.ts`) are hand-kept in sync
+field-for-field with the Pydantic models (`ComplexNumber`, `AmplitudeEntry`,
+`BlochVectorXYZ`, `PerQubitState`, `BipartitionEntanglement`,
+`EntanglementSummary`, `StateAnalysisResponse`) — there is no shared codegen
+between Python and TypeScript in this project, so this is the same
+hand-synchronization discipline every other V2 contract already relies on.
+
+## Statevector, density-matrix, MPS, and stabilizer extraction
+
+All four engine adapters (`engines/aer_statevector.py`, `aer_mps.py`,
+`aer_density.py`, `aer_stabilizer.py`) share one helper,
+`engines/aer_common.py`'s `run_aer_with_state()`: it inserts the engine's own
+save instruction (`save_statevector` / `save_density_matrix` /
+`save_stabilizer`) at the correct point — before any terminal measurement, or
+at the very end for an unmeasured circuit — builds one extra "analysis"
+circuit only when needed (terminal measurements present), and always runs the
+*original* (possibly measured) circuit for `counts` exactly as before. One
+Aer execution produces both counts and the raw state object; a
+terminally-measured circuit costs one additional (measurement-free, therefore
+cheaper) execution for the analysis copy, never a duplicate of the expensive
+run. Mid-circuit measurement is detected up front
+(`analyze_measurement_structure()`) and short-circuits straight to
+`unavailable_state_analysis()` before any extra circuit is built.
+
+`aer_mps.py` reuses the exact same `save_statevector()` call — verified
+empirically that Aer converts the MPS tensor chain to a full statevector
+internally when asked, i.e. there is no cheaper native path in Aer's public
+API to extract state information from an MPS run without that conversion.
+Because that conversion is exactly the "materialize a huge state from a
+structured simulation" risk the standing instructions warn about, it is
+qubit-gated by the same constant the exact statevector engine itself uses
+(`MAX_TOP_AMPLITUDES_QUBITS = 20`), independent of how many qubits the MPS
+*simulation* itself could handle — an MPS circuit above that bound still
+produces `counts` normally and simply gets
+`unavailable_state_analysis(..., "... even a bounded summary requires
+materializing the full state at least transiently ...")` instead of a state.
+When MPS truncation was configured, `state_analysis.warnings` gets an
+explicit "may be approximate" entry — this state is a snapshot of what Aer's
+approximated simulation actually produced, not a claim about the true
+circuit's state.
+
+`aer_density.py` extracts a real `DensityMatrix` via `save_density_matrix()`,
+gated by `MAX_DENSITY_MATRIX_ANALYSIS_QUBITS = 15` (matching the engine's own
+pre-existing hard qubit cap — verified empirically that per-qubit reduction
+itself stays fast (~7 ms/qubit) well past this point, so the real constraint
+is holding the matrix in memory at all, already governed by the existing
+engine cap, not a new, stricter one). Trace and Hermiticity are checked
+against tolerance and reported; a mixed state is *never* silently reported as
+though it were pure.
+
+`aer_stabilizer.py` and `stim_stabilizer.py` return a structured
+**stabilizer summary**, not amplitudes: generator strings (`+XX`, `-ZZ`, ...)
+via `StabilizerState.clifford.to_labels(mode="S")` (Aer) or a second, cheap
+`stim.TableauSimulator` pass (Stim — its batch `compile_sampler()` API used
+for counts has no save-instruction equivalent, so this is a deliberate,
+separate, polynomial-time pass, not a duplicate of the expensive part of the
+simulation). Both explicitly warn that amplitudes/phases/Bloch vectors are
+unavailable from this representation — a stabilizer engine never gets
+silently upgraded to look like it returned a statevector. Generator lists are
+guarded only by a payload-size constant (`MAX_STABILIZER_SUMMARY_QUBITS =
+128`), since tracking them is polynomial-time at any qubit count; an optional
+`deterministic_outcomes` probability table is included only when the caller
+already computed one below `MAX_FULL_STATEVECTOR_QUBITS`, since enumerating
+it is exponential in the worst case.
+
+## Post-processing calculations
+
+All physics/linear-algebra lives in one pure module,
+`backend/analysis/state_postprocessing.py` (~600 lines, no Qiskit/Aer/Stim
+import, unit-testable without starting any simulator): normalization/trace
+checks with configurable tolerance (`1e-6`) and explicit tiny-float clamping
+(`1e-9`) that never hides a genuine large deviation; basis labeling matching
+the frontend's own convention; amplitude entries with magnitude, probability,
+and phase in both radians and degrees; top-k / sparse filtering
+(`SPARSE_PROBABILITY_THRESHOLD = 1e-10`); reduced single-qubit density
+matrices via partial trace (`reduced_density_matrix_from_statevector` for a
+pure global state — `reshape` + `moveaxis`; `reduced_density_matrix_from_
+density_matrix` for a mixed one — `einsum`), both using the axis convention
+`axis_for_qubit(q, n) = n - 1 - q` (reshaping a length-`2**n` array into an
+all-2s tensor puts qubit 0 at the *last* tensor axis); per-qubit Bloch
+vectors (`x = Tr(rho X), y = Tr(rho Y), z = Tr(rho Z)`), purity (`Tr(rho^2)`),
+and von Neumann entropy (bits, eigenvalues clamped to `[0, 1]` before `log2`);
+Wootters concurrence for both the pure 2-qubit closed form (`C = 2|ad - bc|`)
+and the full mixed-state formula (`C = max(0, lambda_1 - lambda_2 - lambda_3
+- lambda_4)` via `rho~ = (Y (x) Y) rho* (Y (x) Y)`), the mixed-state formula
+cross-checked against the textbook Werner-state result `C = max(0, (3p-1)/2)`
+(including the p = 1/3 disentangling threshold) before being trusted; Schmidt
+coefficients for a bipartition via SVD of a reshaped/permuted amplitude
+tensor, and entanglement entropy from them. Every top-level entry point
+(`statevector_analysis`, `density_matrix_analysis`, `stabilizer_summary`)
+degrades to `{available: False, unavailable_reason: ...}` on any
+`StatePostprocessingError` rather than ever failing the containing
+simulation response — `counts` and everything else always come back even if
+state post-processing itself hits a problem.
+
+## Bloch-sphere derivation and multi-qubit behavior
+
+`components/composer/BlochSphere3D.tsx` needed **zero code changes** — it was
+already a pure `{x, y, z} -> SVG` renderer with no opinion about where its
+vector comes from, and it already draws a shortened vector correctly for
+`|vector| < 1` (linear scale by `RADIUS`, no re-normalization). The entire gap
+was that nothing backend-derived ever called it. The new
+`components/simulator/state/BlochQubitView.tsx` is the first caller that
+does: it reads `state_analysis.per_qubit[i].bloch_vector` directly (all
+Bloch/purity/entropy math is computed once, server-side) and renders one
+sphere for whichever qubit is currently selected via a qubit-selector row —
+never one global sphere for a multi-qubit state, since a multi-qubit pure
+state does not, in general, live on any single qubit's sphere. Selecting a
+different qubit swaps in that qubit's own reduced state, magnitude, purity,
+entropy, and expectation values.
+
+**Bell-state regression, verified both numerically and visually:** for
+`H(q0); CX(q0, q1)`, `per_qubit[0].bloch_vector` is exactly `(0, 0, 0)`
+(purity `0.5`, entropy `1.0` bit) while `entanglement.concurrence` is `1.0`
+and each bipartition's Schmidt rank is `2` / entropy `1.0` bit — the global
+state is pure and maximally entangled while neither qubit's own reduced state
+is. This exact case is asserted in
+`backend/tests/test_state_analysis_integration.py`, and was independently
+re-confirmed by driving the real backend through the real UI in a browser
+(Playwright, `e2e/state-analysis.spec.ts` and the `bell-state-bloch.png`
+baseline) — the Bloch dot sits visibly at the sphere's center, not on its
+surface.
+
+## Entanglement calculations
+
+`EntanglementSummary`: `concurrence` (2-qubit only — `null` with an
+explanatory `concurrence_note` otherwise, never a value that isn't
+well-defined), `bipartitions` (Schmidt coefficients/rank/entanglement entropy
+for every single-qubit-vs-rest cut plus, for `n > 2`, one representative
+balanced first-half/second-half cut — "selected bipartitions where safely
+bounded," not every possible cut), `global_purity`, `per_qubit_purity`,
+`product_state_indicator` (pure states only — a product state is exactly one
+where every qubit's reduced purity is 1), and a fixed `explanation` string.
+Every entanglement view (backend `global_metrics`/`entanglement` fields and
+the frontend `EntanglementView.tsx`) carries an explicit disclaimer that this
+is *not* a complete entanglement classification for arbitrary mixed,
+multipartite states — concurrence and the Schmidt/entropy figures characterize
+specific two-body or bipartite aspects only, never a general answer to "is
+this state entangled."
+
+## Measurement handling
+
+- **No measurement** → `final_state` (statevector/stabilizer) or
+  `mixed_final_state` (density matrix): the real, only execution's state.
+- **Terminal measurement(s) only** (structurally verified: no operation
+  touches a qubit after that qubit's last measurement) → `pre_measurement_
+  state`: a second, measurement-free analysis circuit built from the same
+  validated operations, run separately from — and without altering — the
+  circuit that produces `counts`. The frontend's `PreMeasurementNotice`
+  callout states this explicitly wherever the state view is shown.
+- **Mid-circuit measurement** (any operation after a qubit's own
+  measurement) → `available: false` with a specific `unavailable_reason`;
+  never silently dropped, reordered, or ignored.
+
+## Frontend state-result views
+
+A new "Quantum State" tab in `SimulationResultPanel.tsx` (alongside the
+existing Distribution/Diagnostics/Diagram tabs), gated on nothing — it always
+renders, but shows one of three states itself: not requested (state analysis
+toggle was off), unavailable (with the backend's own reason), or the full
+`QuantumStatePanel`. That panel owns its own sub-tab row, showing only
+applicable views: **Overview** (representation/semantic-point badges,
+pre-measurement/mixed-state notices, normalization, Dirac notation, top
+states, JSON/CSV export), **Probabilities** (theoretical-vs-sampled-counts
+callout, full probability table, per-qubit marginal bars), **Phases** (hidden
+entirely when the representation has no per-basis phase, e.g. a
+density-matrix diagonal — phase wheel legend plus an exact numeric table,
+color always paired with a number, never color-only), **Bloch** (qubit
+selector + `BlochSphere3D` + numeric stats + a plain-language explanation of
+*why* a reduced state is mixed when it is), **Density Matrix** (only when
+`representation === "density_matrix"` — scalar metrics always, a magnitude
+heatmap capped at a 16x16-cell grid with a full accessible `<table>`, a
+"too large to render, use the export" notice above that, diagonal
+probabilities), and **Entanglement** (only when the backend actually computed
+one). All amplitude/probability tables share one component
+(`components/simulator/state/AmplitudeTable.tsx`) capped at a bounded row
+count with a "+N more, use the export" footer — the same bounded-rendering
+strategy `HistogramPanel` already used for measurement counts, not a new
+pattern.
+
+Composer's local preview (`StatePreviewPanel.tsx`) was relabeled "Live ideal
+preview — calculated locally in this browser," with an explicit paragraph
+distinguishing it from a real backend result, plus two new, entirely
+manual actions: "Open in Simulator Lab" (hands off the resolved circuit and
+navigates) and "Compare with backend result" (fetches one exact
+`state_analysis` and shows a small local-probability-vs-backend-probability
+table). Neither runs automatically on any edit — both are explicit clicks,
+per the standing instruction.
+
+## Export
+
+`lib/stateAnalysisFormat.ts`'s `stateAnalysisToJson()` includes a
+`schemaVersion`, an `exportedAt` timestamp, and the complete `state_analysis`
+object verbatim (representation, qubit order, amplitudes, metrics, warnings
+included) — verified end-to-end via a real download in Playwright
+(`e2e/state-analysis.spec.ts`'s JSON-export test parses the downloaded file
+and asserts its shape). `stateAnalysisToCsv()` returns one row per
+basis-state entry (whichever of `amplitudes`/`top_states`/`basis_probabilities`
+is populated) or `null` when no per-basis table exists (a stabilizer
+summary) — CSV export was not claimed for a representation that has no
+per-basis table to export. A NumPy-compatible `.npy`/`.npz` export was not
+implemented — it was not tested against real NumPy and is not claimed.
+
+## Performance and safety limits
+
+All qubit-count limits live as named constants in
+`state_postprocessing.py`, independent of and generally stricter than the
+corresponding simulation engine's own cap: full amplitude payload ≤ 12 qubits
+(`MAX_FULL_STATEVECTOR_QUBITS`), any state analysis at all ≤ 20 qubits
+(`MAX_TOP_AMPLITUDES_QUBITS` — above this even a bounded top-k summary would
+require transiently materializing the full state), full density-matrix
+payload ≤ 8 qubits (`MAX_DENSITY_MATRIX_PAYLOAD_QUBITS`), density-matrix
+analysis (metrics only) ≤ 15 qubits (`MAX_DENSITY_MATRIX_ANALYSIS_QUBITS`,
+matching the engine's own pre-existing cap), entanglement/Schmidt
+calculations ≤ 12 qubits (shares the full-statevector limit, since Schmidt
+decomposition needs an SVD of comparable size), stabilizer generator lists ≤
+128 qubits (a payload-size, not computational-feasibility, guard). Every
+numeric request knob (`max_returned_amplitudes`, `top_k_states`) is clamped
+server-side by Pydantic `Field(ge=..., le=...)` regardless of what the
+client asked for — confirmed by a 422 test for out-of-range values. No NaN or
+Infinity is ever serialized — `assert_finite_array()`/`_require_finite()` run
+immediately after extracting a raw state and raise rather than silently
+producing invalid JSON. On the frontend, every amplitude/probability table
+renders a capped number of rows with a "+N more" footer rather than the full
+list, regardless of how large the underlying (already-capped) payload is;
+the density-matrix heatmap additionally refuses to render a cell grid above
+16x16 and points at the JSON export instead. "Simulation feasibility is not
+visualization feasibility" is true by construction here: every state-analysis
+limit is independent of, and in every case at most equal to, the
+corresponding simulation engine's own qubit cap.
+
+## Custom-gate integration
+
+State analysis runs on the fully **resolved** circuit — the same
+`"unitary"`-flattened form every other backend call already required — so a
+matrix-defined custom gate's state is analyzed exactly like a built-in-gate
+circuit that happens to contain a `UnitaryGate`; no engine or post-processing
+code needed to know custom gates exist. This was verified directly: hitting
+`/circuit/simulate-v2` with a `{"gate": "unitary", "qubits": [1], "matrix":
+pauli_x, ...}` operation (mirroring what the resolver actually emits) alongside
+an `h`/`cx` pair, requesting `include_state_analysis=True`, is one of the 19
+new backend integration tests, and it passes.
+
+**A pre-existing bug was discovered, not introduced, while trying to exercise
+this end-to-end through the real Composer UI.** `ComposerMode.tsx`'s
+`openSimulatorLab()` correctly resolves a circuit's custom gates before
+handoff (directly confirmed: logging `resolved.circuit`'s gate list at the
+exact moment of the click showed `["unitary"]`, as expected) and calls
+`workspace.setLabCircuit(resolved.circuit)` immediately followed by
+`router.push("/simulator")` from the same click handler. By the time
+Simulator Lab actually issues its `/circuit/simulate-v2` request, though, the
+circuit it holds has reverted to the raw, unresolved `{"gate": "custom", ...}`
+operation, which the backend correctly rejects with a 422 (an honest failure,
+not a silently wrong result, but also not the intended success path). Two
+targeted fixes to `app/simulator/page.tsx`'s one-shot `labCircuit` handoff ref
+(deferring `SimulatorLab`'s first render until after a mount effect; and a
+lazy re-check-every-render pattern mirroring `SimulatorLab`'s own `bootRef`
+idiom) were implemented and tested directly against the running app, and
+neither resolved it — both were reverted, leaving `app/simulator/page.tsx`
+and `components/composer/ComposerMode.tsx` byte-identical to their state
+before this investigation. This points to something in the client-side route
+transition itself (Next.js App Router internals) rather than a component-level
+timing fix reachable from this pass, and is flagged as a follow-up rather
+than fixed here — it is pre-existing Composer/Simulator-Lab handoff behavior,
+not something the state-analysis work introduced, and every frontend view in
+this pass is otherwise completely gate-provenance-agnostic (they only ever
+render `state_analysis` JSON, never anything gate-shape-specific), so the
+feature's own correctness does not depend on this bug being fixed.
+
+## UI views (summary table)
+
+| View | Shown when | Key content |
+| --- | --- | --- |
+| Overview | always (state available) | representation/semantic-point/engine badges, notices, Dirac notation, top states, export |
+| Probabilities | a per-basis probability list exists | theoretical-probability table, per-qubit marginals |
+| Phases | at least one entry has a defined phase | phase wheel + numeric table, global-phase note |
+| Bloch | `per_qubit` is non-empty | qubit selector, sphere, x/y/z, purity, entropy, mixedness explanation |
+| Density Matrix | `representation === "density_matrix"` | trace/purity/entropy/Hermiticity, magnitude heatmap (bounded), diagonal probabilities |
+| Entanglement | `entanglement` is present | concurrence (2-qubit), bipartitions, per-qubit purity, disclaimer |
+
+## Tests
+
+**Backend** (89 new tests, 130 total, all passing): `test_state_postprocessing.py`
+(35 tests) — reference-state Bloch vectors for all six canonical single-qubit
+states (`|0>, |1>, |+>, |->, |+i>, |-i>`) against the exact expected vectors,
+maximally-mixed state, arbitrary rotation, global-phase invariance, Bell/GHZ
+reduction (including the explicit near-origin regression), separable-state
+reduction, density-matrix/statevector cross-checks, concurrence (Bell/product/
+Werner-state formula match), Schmidt coefficients (Bell/product/GHZ), finite-
+value guarding, and full round trips through all three top-level analysis
+functions. `test_state_analysis_integration.py` (19 tests, real Aer/Stim, no
+mocks) — backward compatibility, final/pre-measurement/mixed-final semantic
+points, mid-circuit rejection, the Bell-state regression, GHZ all-qubits-mixed,
+single-qubit reference states via the real API, state-detail levels (including
+the two real bugs this caught, below), MPS state analysis and its truncation
+warning, density-matrix noiseless/noisy/payload-omitted, Aer-stabilizer and
+Stim-stabilizer generator summaries, unitary-gate (custom-gate-equivalent)
+compatibility, and server-side clamping of out-of-range request values (422).
+`test_engines.py`'s one pre-existing MPS metadata test was updated for the
+new `run_aer_with_state`/`StateCapableRun` shape it now exercises.
+
+**Frontend unit** (Vitest, pure logic only — `lib/**/*.test.ts`; this project
+deliberately keeps component/rendering behavior in Playwright instead, per
+`vitest.config.ts`'s own stated scope): `lib/stateAnalysisFormat.test.ts`, 33
+tests covering complex/probability/phase formatting, the phase-to-color
+mapping, semantic-point/representation/qubit-order labels, Dirac notation
+(including truncation and the no-amplitude-data case), the density-matrix
+heatmap color transform (lightest at 0, darkest at 1, monotonic, clamped
+out-of-range), `displayEntries`'s fallback priority
+(`amplitudes > top_states > basis_probabilities`), and both export formats.
+
+**Frontend end-to-end** (Playwright, real backend, `e2e/state-analysis.spec.ts`
++ `e2e/state-analysis-visual.spec.ts`, both skip themselves — not the whole
+suite — when `http://localhost:8000` is unreachable, matching
+`e2e/backend.spec.ts`'s existing convention): `H|0>` Bloch +X, `X|0>` south
+pole, `S.H|0>` +Y, the Bell-state reduced-qubit/entanglement regression, the
+exact-vs-sampled-counts distinction, the terminal-measurement pre-measurement
+notice, the mid-circuit-measurement unavailable reason, a noisy
+density-matrix shortened Bloch vector, a real JSON-export download parsed and
+schema-checked, the mobile (390x844) layout, and two axe scans (statevector
+Bell state's five views; the noisy density-matrix view) with zero
+serious/critical violations — 12 tests, all passing. Six screenshot baselines
+(`state-analysis-visual.spec.ts-snapshots/`): one-qubit Bloch, Bell-state
+reduced Bloch, amplitude/phase, density-matrix, entanglement, and mobile —
+generated and re-verified stable across a second run. A dedicated custom-gate
+Playwright scenario was planned but intentionally not included; see "Custom-gate
+integration" above for why, and what is covered instead (the backend's
+unitary-gate integration test).
+
+## Remaining limitations
+
+- The Composer -> Simulator-Lab handoff race for custom-gate circuits
+  (described above) is unresolved; a circuit containing a custom gate,
+  handed to Simulator Lab via the "Simulator Lab" toolbar button or the new
+  "Open in Simulator Lab" action, may be rejected by the backend (422)
+  instead of producing a state analysis. Ordinary (non-custom-gate) circuits
+  and every other handoff path are unaffected.
+- MPS state extraction reuses the exact-statevector conversion path (Aer
+  converts its own tensor chain internally) rather than computing reduced
+  states directly from the raw MPS tensors — deferred, not attempted, since
+  it is a nontrivial tensor-network computation in its own right; the
+  qubit-gated fallback (`unavailable_reason` above 20 qubits) is honest about
+  this rather than pretending a cheaper path exists.
+- Entanglement bipartitions beyond single-qubit-vs-rest and one representative
+  balanced cut are not enumerated (`2**n` possible cuts would be exponential
+  to compute or return in general) — "selected bipartitions where safely
+  bounded," as specified, not an exhaustive list.
+- No NumPy `.npy`/`.npz` export; only JSON and CSV, both verified against a
+  real download.
+- Global phase is never corrected or canonicalized (documented, not a bug):
+  two equivalent circuits or engines may report the same physical state with
+  different overall phases, and the statevector view says so explicitly.
+- The density-matrix heatmap shows magnitude only (no separate real/
+  imaginary/phase heatmap toggle) — the full complex value is available via
+  the cell's accessible table representation and the JSON export, but a
+  multi-mode heatmap was not built in this pass.

@@ -36,6 +36,12 @@ class EngineResult:
     engine_reason: str
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Populated only when SimulationOptions.include_state_analysis was set
+    # and this engine/circuit combination could honestly produce one; see
+    # analysis/state_postprocessing.py. None (not an "unavailable" dict)
+    # when state analysis was never requested, so a plain `simulate-v2` call
+    # is unaffected either way.
+    state_analysis: dict[str, Any] | None = None
 
 
 def is_module_available(module_name: str) -> bool:

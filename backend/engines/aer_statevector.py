@@ -12,7 +12,8 @@ from analysis.resource_estimator import (
     feasibility_from_log2_bytes,
     statevector_log2_bytes,
 )
-from engines.aer_common import run_aer
+from analysis.state_postprocessing import MAX_TOP_AMPLITUDES_QUBITS
+from engines.aer_common import build_state_analysis, run_aer_with_state
 from engines.base import EngineResult, InfeasibleCircuitError
 
 ENGINE_ID = "aer_statevector"
@@ -53,17 +54,30 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             f"(~{analysis['estimated_statevector_memory_human']})."
         )
 
-    counts, run_warnings = run_aer(
+    run_result = run_aer_with_state(
         request,
         method="statevector",
         shots=options.shots,
         seed=options.seed,
         noise_model=None,
+        want_state=options.include_state_analysis,
+        save_instruction="save_statevector",
+        max_state_qubits=MAX_TOP_AMPLITUDES_QUBITS,
     )
-    warnings.extend(run_warnings)
+    warnings.extend(run_result.warnings)
+
+    state_analysis = build_state_analysis(
+        run_result,
+        num_qubits=num_qubits,
+        source_engine=ENGINE_ID,
+        kind="statevector",
+        detail=options.state_detail,
+        max_amplitudes=options.max_returned_amplitudes,
+        top_k=options.top_k_states,
+    )
 
     return EngineResult(
-        counts=counts,
+        counts=run_result.counts,
         selected_engine=ENGINE_ID,
         engine_reason=(
             f"Exact statevector simulation is feasible for {num_qubits} qubits "
@@ -71,4 +85,5 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
         ),
         warnings=warnings,
         metadata={"method": "statevector", "memory_risk": risk},
+        state_analysis=state_analysis,
     )

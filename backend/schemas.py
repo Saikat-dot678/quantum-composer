@@ -254,6 +254,17 @@ class SimulationOptions(BaseModel):
     mps_truncation_threshold: Optional[float] = Field(default=None, gt=0.0, le=1.0)
     seed: Optional[int] = Field(default=None, ge=0, le=2**63 - 1)
 
+    # --- Optional post-simulation state analysis -----------------------
+    # Off by default: a normal simulation call stays exactly as lightweight
+    # as before. Every limit here is re-enforced server-side regardless of
+    # what is requested -- see analysis/state_postprocessing.py's named
+    # constants, which are the actual authority.
+    include_state_analysis: bool = False
+    state_detail: Literal["summary", "top_amplitudes", "full"] = "summary"
+    include_density_matrix: bool = False
+    max_returned_amplitudes: int = Field(default=64, ge=1, le=4096)
+    top_k_states: int = Field(default=16, ge=1, le=200)
+
 
 class AdvancedCircuitRequest(BaseModel):
     """Circuit request with relaxed container limits for structured circuits."""
@@ -337,6 +348,103 @@ class CircuitAnalysisResponse(BaseModel):
     resource_estimate: dict[str, Any]
 
 
+# ---------------------------------------------------------------------------
+# Post-simulation quantum-state analysis
+#
+# Populated only when `SimulationOptions.include_state_analysis` is set and
+# the engine/circuit combination can honestly produce one of the three
+# representations below. See analysis/state_postprocessing.py for the
+# numerics and docs/CUSTOM_GATES.md / docs/ARCHITECTURE.md for the full
+# semantics writeup. Complex numbers are never sent as raw Python complex --
+# always a {re, im} pair, so this schema stays valid JSON.
+# ---------------------------------------------------------------------------
+
+
+class ComplexNumber(BaseModel):
+    re: float
+    im: float
+
+
+class AmplitudeEntry(BaseModel):
+    """One basis state's contribution. For a density-matrix diagonal entry
+    (a mixed state has no single well-defined per-basis phase), `amplitude`,
+    `phase_radians`, and `phase_degrees` are null -- only `probability` is
+    meaningful. A pure-state entry always populates all fields."""
+
+    index: Optional[int] = None
+    basis: str
+    amplitude: Optional[ComplexNumber] = None
+    probability: float
+    phase_radians: Optional[float] = None
+    phase_degrees: Optional[float] = None
+
+
+class BlochVectorXYZ(BaseModel):
+    x: float
+    y: float
+    z: float
+
+
+class PerQubitState(BaseModel):
+    qubit: int
+    bloch_vector: BlochVectorXYZ
+    bloch_magnitude: float
+    purity: float
+    von_neumann_entropy_bits: float
+    expectation_x: float
+    expectation_y: float
+    expectation_z: float
+    probability_0: float
+    probability_1: float
+    is_mixed: bool
+    marginal_probability_1: Optional[float] = None
+
+
+class BipartitionEntanglement(BaseModel):
+    partition_a: list[int]
+    partition_b: list[int]
+    schmidt_coefficients: list[float]
+    schmidt_rank: int
+    entanglement_entropy_bits: float
+
+
+class EntanglementSummary(BaseModel):
+    concurrence: Optional[float] = None
+    concurrence_note: Optional[str] = None
+    bipartitions: list[BipartitionEntanglement] = Field(default_factory=list)
+    global_purity: Optional[float] = None
+    per_qubit_purity: list[float] = Field(default_factory=list)
+    product_state_indicator: Optional[bool] = None
+    explanation: str
+
+
+class StateAnalysisResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    available: bool
+    representation: Optional[Literal["statevector", "density_matrix", "stabilizer_summary"]] = None
+    source_engine: Optional[str] = None
+    semantic_point: Optional[Literal["final_state", "pre_measurement_state", "mixed_final_state"]] = None
+    qubit_order: str = "qiskit_little_endian_q0_lsb"
+    num_qubits: Optional[int] = None
+    normalized: Optional[bool] = None
+    normalization_error: Optional[float] = None
+    amplitudes: Optional[list[AmplitudeEntry]] = None
+    density_matrix: Optional[list[list[ComplexNumber]]] = None
+    basis_probabilities: Optional[list[AmplitudeEntry]] = None
+    top_states: Optional[list[AmplitudeEntry]] = None
+    per_qubit: Optional[list[PerQubitState]] = None
+    entanglement: Optional[EntanglementSummary] = None
+    # Different representations report different metric sets (statevector:
+    # purity/amplitude counts/global-phase note; density matrix: trace/
+    # Hermiticity/entropy; stabilizer: generator list) -- deliberately a
+    # loose bag rather than a discriminated union, matching the "optional
+    # object" shape requested for this field.
+    global_metrics: Optional[dict[str, Any]] = None
+    warnings: list[str] = Field(default_factory=list)
+    unavailable_reason: Optional[str] = None
+
+
 class SimulationV2Response(BaseModel):
     counts: dict[str, int]
     depth: int
@@ -348,6 +456,7 @@ class SimulationV2Response(BaseModel):
     timing_ms: float
     diagram: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    state_analysis: Optional[StateAnalysisResponse] = None
 
 
 # ---------------------------------------------------------------------------

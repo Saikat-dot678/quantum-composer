@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from analysis.circuit_analyzer import analyze_circuit
 from engines import aer_mps, router
+from engines.aer_common import StateCapableRun
 from engines.base import InfeasibleCircuitError, stim_available
 from engines.stim_stabilizer import _ensure_sampling_work_is_safe
 from main import app
@@ -227,7 +228,7 @@ def test_noise_model_type_is_a_closed_contract():
 
 
 def test_mps_metadata_marks_configured_truncation_without_claiming_measured_loss(monkeypatch):
-    monkeypatch.setattr(aer_mps, "run_aer", lambda *args, **kwargs: ({"0": 8}, []))
+    monkeypatch.setattr(aer_mps, "run_aer_with_state", lambda *args, **kwargs: StateCapableRun(counts={"0": 8}))
     options = SimulationOptions(
         engine="aer_mps",
         shots=8,

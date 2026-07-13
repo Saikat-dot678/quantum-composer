@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from analysis.state_postprocessing import MAX_STABILIZER_SUMMARY_QUBITS
+from engines.aer_common import analyze_measurement_structure
 from engines.base import (
     EngineNotAvailableError,
     EngineResult,
@@ -21,7 +23,7 @@ from engines.base import (
     UnsupportedGateError,
     stim_available,
 )
-from validators import ordered_operations
+from validators import ordered_operation_items, ordered_operations
 
 ENGINE_ID = "stim_stabilizer"
 
@@ -67,6 +69,27 @@ def _ensure_sampling_work_is_safe(shots: int, width: int) -> int:
             "register width."
         )
     return work_cells
+
+
+def _stabilizer_generators(operations: Any, num_qubits: int) -> list[str]:
+    """A second, separate `stim.TableauSimulator` pass over the same
+    (non-measure) gate sequence -- stabilizer tracking is polynomial-time
+    even at huge qubit counts, so this duplicate pass is cheap, not a
+    "duplicate expensive simulation" concern. Never includes measurement:
+    the tableau describes the state at the point state analysis targets
+    (final or pre-measurement), which by construction is always before any
+    measurement once mid-circuit measurement has been ruled out.
+    """
+    stim = _load_stim()
+    sim = stim.TableauSimulator()
+    tableau_circuit = stim.Circuit()
+    for _, op in ordered_operation_items(list(operations)):
+        if op.gate in _STIM_GATES:
+            tableau_circuit.append(_STIM_GATES[op.gate], list(op.qubits))
+        # measure/barrier are meaningless to a tableau simulator; skipped.
+    sim.do(tableau_circuit)
+    tableau = sim.current_inverse_tableau().inverse()
+    return [str(tableau.z_output(k)) for k in range(num_qubits)]
 
 
 def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
@@ -155,6 +178,39 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             counts[key] = counts.get(key, 0) + 1
         remaining -= batch_size
 
+    state_analysis = None
+    if options.include_state_analysis:
+        from analysis import state_postprocessing as sp
+
+        num_qubits = request.num_qubits
+        if num_qubits > MAX_STABILIZER_SUMMARY_QUBITS:
+            state_analysis = sp.unavailable_state_analysis(
+                ENGINE_ID,
+                f"Stabilizer generator summary is only attempted up to {MAX_STABILIZER_SUMMARY_QUBITS} "
+                f"qubits (this circuit has {num_qubits}); payload-size guard only -- stabilizer "
+                "tracking itself remains polynomial-time at any scale.",
+            )
+        else:
+            structure = analyze_measurement_structure(request.operations)
+            if structure["mid_circuit"]:
+                state_analysis = sp.unavailable_state_analysis(
+                    ENGINE_ID,
+                    "A single deterministic pure quantum state is not available because this circuit "
+                    "measures a qubit and then continues operating on it -- the state after a "
+                    "mid-circuit measurement depends on the (random) measurement outcome.",
+                )
+            else:
+                try:
+                    generators = _stabilizer_generators(request.operations, num_qubits)
+                    state_analysis = sp.stabilizer_summary(
+                        generators,
+                        num_qubits,
+                        source_engine=ENGINE_ID,
+                        semantic_point="final_state" if not has_explicit_measure else "pre_measurement_state",
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    state_analysis = sp.unavailable_state_analysis(ENGINE_ID, f"Stabilizer extraction failed: {exc}")
+
     return EngineResult(
         counts=counts,
         selected_engine=ENGINE_ID,
@@ -168,4 +224,5 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             "is_clifford": True,
             "sample_work_cells": work_cells,
         },
+        state_analysis=state_analysis,
     )

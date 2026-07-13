@@ -4,7 +4,7 @@ import { useState } from "react";
 import { LIMITS } from "@/lib/constants";
 import { LAB_PRESETS } from "@/lib/labPresets";
 import { formatEngineName, formatInteger } from "@/lib/formatting";
-import type { CircuitAnalysis, EngineId, EnginesResponse, LabPreset } from "@/lib/labTypes";
+import type { CircuitAnalysis, EngineId, EnginesResponse, LabPreset, StateDetail } from "@/lib/labTypes";
 import type { CircuitData } from "@/lib/types";
 import { Play, RefreshCw } from "lucide-react";
 import {
@@ -12,6 +12,7 @@ import {
   Button,
   FormField,
   NumberInput,
+  SelectField,
   Toggle,
 } from "../ui/primitives";
 import {
@@ -40,6 +41,9 @@ interface SimulatorControlPanelProps {
   maxMemoryMb: number;
   mpsBondDimension: OptionalNumber;
   mpsTruncationThreshold: OptionalNumber;
+  includeStateAnalysis: boolean;
+  stateDetail: StateDetail;
+  includeDensityMatrix: boolean;
   analysisLoading: boolean;
   runLoading: boolean;
   onLoadComposer: () => void;
@@ -51,6 +55,9 @@ interface SimulatorControlPanelProps {
   onMaxMemoryChange: (value: number) => void;
   onMpsBondDimensionChange: (value: OptionalNumber) => void;
   onMpsTruncationThresholdChange: (value: OptionalNumber) => void;
+  onIncludeStateAnalysisChange: (enabled: boolean) => void;
+  onStateDetailChange: (value: StateDetail) => void;
+  onIncludeDensityMatrixChange: (enabled: boolean) => void;
   onAnalyze: () => void;
   onRun: () => void;
 }
@@ -74,6 +81,9 @@ export function SimulatorControlPanel({
   maxMemoryMb,
   mpsBondDimension,
   mpsTruncationThreshold,
+  includeStateAnalysis,
+  stateDetail,
+  includeDensityMatrix,
   analysisLoading,
   runLoading,
   onLoadComposer,
@@ -85,6 +95,9 @@ export function SimulatorControlPanel({
   onMaxMemoryChange,
   onMpsBondDimensionChange,
   onMpsTruncationThresholdChange,
+  onIncludeStateAnalysisChange,
+  onStateDetailChange,
+  onIncludeDensityMatrixChange,
   onAnalyze,
   onRun,
 }: SimulatorControlPanelProps) {
@@ -292,6 +305,38 @@ export function SimulatorControlPanel({
                 />
               </div>
             </details>
+
+            <div className="border-t border-lab-border pt-3">
+              <Toggle
+                checked={includeStateAnalysis}
+                disabled={controlsDisabled}
+                onChange={onIncludeStateAnalysisChange}
+                label="Post-simulation quantum state analysis"
+                description="Extracts the actual simulated state (not the Composer's local preview) for the Quantum State result tab. Off by default -- a normal run stays lightweight."
+              />
+              {includeStateAnalysis && (
+                <div className="mt-3 space-y-3 border-l-2 border-accent-cyan/30 pl-3">
+                  <SelectField
+                    id="simulator-state-detail"
+                    label="Amplitude detail"
+                    disabled={controlsDisabled}
+                    value={stateDetail}
+                    onChange={(event) => onStateDetailChange(event.target.value as StateDetail)}
+                  >
+                    <option value="summary">Summary (top states + per-qubit only)</option>
+                    <option value="top_amplitudes">Top amplitudes</option>
+                    <option value="full">Full amplitude list (small circuits only)</option>
+                  </SelectField>
+                  <Toggle
+                    checked={includeDensityMatrix}
+                    disabled={controlsDisabled}
+                    onChange={onIncludeDensityMatrixChange}
+                    label="Include full density matrix payload"
+                    description="Only for the density-matrix engine, and only up to a small qubit count -- metrics (purity, entropy, Bloch vectors) stay available either way."
+                  />
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

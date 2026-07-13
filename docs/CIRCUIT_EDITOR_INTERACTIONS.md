@@ -129,6 +129,37 @@ zoom/pan state (which `zoomToFit()` changes on mount based on viewport size)
 — this was a deliberate test-infrastructure choice after an earlier
 hard-coded-pixel version proved flaky.
 
+## Local preview vs. backend state analysis
+
+The Inspector's state preview (`StatePreviewPanel.tsx`, for circuits up to 5
+qubits) is explicitly labeled "Live ideal preview — calculated locally in
+this browser" — an idealized, noiseless state recomputed on every edit by a
+small hand-rolled simulator (`frontend/lib/statevector.ts`), never a
+simulation result. It is not, and does not claim to be, the actual state a
+backend engine would return for the same circuit (real engine routing,
+honest measurement semantics, noise). Two explicit, non-automatic actions
+sit next to it:
+
+- **"Open in Simulator Lab"** hands off the resolved circuit and navigates to
+  the full multi-engine analysis workbench, where an opt-in "Post-simulation
+  quantum state analysis" run option (off by default) returns the actual
+  backend-computed state — amplitudes, probabilities, phases, per-qubit
+  Bloch spheres, density-matrix diagnostics, and entanglement metrics — in a
+  dedicated "Quantum State" result tab. See
+  [ARCHITECTURE.md](ARCHITECTURE.md) for the full pipeline.
+- **"Compare with backend result"** runs one real `simulate-v2` call and
+  shows a small table of the local preview's probability for each basis
+  state next to the backend's exact theoretical probability for the same
+  state (both deterministic, no shot noise) — useful for confirming a custom
+  gate resolves the way the preview assumed. Neither action, nor the
+  comparison it triggers, ever runs automatically on an edit; both require an
+  explicit click.
+
+The local preview's own limits (≤ 5 qubits, ignores measurement, resolves
+custom gates first or explains why it can't) are unchanged by any of this —
+see [CUSTOM_GATES.md](CUSTOM_GATES.md) and `README.md`'s "Live state preview"
+section.
+
 ## Performance
 
 - **Viewport virtualization**: only the visible `(qubit, moment)` window is

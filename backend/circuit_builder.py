@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
-from schemas import CircuitRequest
-from validators import ordered_operations
+from schemas import CircuitOperation, CircuitRequest
+from validators import ordered_operation_items, ordered_operations
 
 
 class QuantumDependencyError(RuntimeError):
@@ -20,13 +20,17 @@ def _load_quantum_circuit():
     return QuantumCircuit
 
 
-def build_circuit(request: CircuitRequest) -> Any:
-    QuantumCircuit = _load_quantum_circuit()
+def apply_operations(circuit: Any, operations: Sequence[CircuitOperation]) -> None:
+    """Appends `operations` (already in the desired execution order) onto an
+    existing `QuantumCircuit` in place. Factored out of `build_circuit` so
+    callers that need a save instruction *between* two slices of the same
+    operation list (see engines/aer_common.py's state-analysis circuit
+    construction) can call this twice on one circuit object instead of
+    duplicating the gate-dispatch dictionary.
+    """
     from qiskit.circuit.library import UnitaryGate
 
-    circuit = QuantumCircuit(request.num_qubits, request.num_clbits)
-
-    for _, operation in ordered_operations(request):
+    for operation in operations:
         gate = operation.gate
         q = operation.qubits
 
@@ -47,4 +51,23 @@ def build_circuit(request: CircuitRequest) -> Any:
             matrix = [[complex(re, im) for re, im in row] for row in operation.matrix]
             circuit.append(UnitaryGate(matrix, label=operation.label), q)
 
+
+def build_circuit(request: CircuitRequest) -> Any:
+    QuantumCircuit = _load_quantum_circuit()
+    circuit = QuantumCircuit(request.num_qubits, request.num_clbits)
+    apply_operations(circuit, [operation for _, operation in ordered_operations(request)])
     return circuit
+
+
+def empty_circuit(num_qubits: int, num_clbits: int) -> Any:
+    """A bare QuantumCircuit with no operations -- the building block
+    engines/aer_common.py uses to construct a state-analysis circuit
+    operation-by-operation alongside a save instruction."""
+    QuantumCircuit = _load_quantum_circuit()
+    return QuantumCircuit(num_qubits, num_clbits)
+
+
+def ordered_operation_list(request: Any) -> list[CircuitOperation]:
+    """`request.operations` in the same visual-moment execution order
+    `build_circuit` uses, without needing a full CircuitRequest re-validation."""
+    return [operation for _, operation in ordered_operation_items(request.operations)]

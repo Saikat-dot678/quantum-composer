@@ -35,7 +35,7 @@ test("analyzing the circuit shows backend-verified feasibility in the inspector"
 
 test("Open in Simulator Lab hands off the live Composer circuit", async ({ page }) => {
   await page.goto("/composer");
-  await page.getByRole("button", { name: "Simulator Lab" }).click();
+  await page.getByRole("button", { name: "Simulator Lab", exact: true }).click();
   await expect(page).toHaveURL(/\/simulator/);
   await expect(page.getByText("Live Composer circuit").first()).toBeVisible();
 });

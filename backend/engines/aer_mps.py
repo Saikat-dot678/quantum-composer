@@ -13,10 +13,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from engines.aer_common import run_aer
+from analysis.state_postprocessing import MAX_TOP_AMPLITUDES_QUBITS
+from engines.aer_common import build_state_analysis, run_aer_with_state
 from engines.base import EngineResult
 
 ENGINE_ID = "aer_mps"
+
+# Aer's save_statevector instruction converts the MPS tensor chain to a full
+# 2**n-amplitude statevector under the hood -- exactly the "huge
+# MPS-to-statevector conversion" state analysis must not do silently for a
+# large circuit. Gated at the same qubit count as the exact statevector
+# engine's own state-analysis limit: MPS's whole advantage is scaling past
+# that qubit count *for simulation*, but visualization stays bounded
+# regardless of which engine produced the result.
+MAX_STATE_QUBITS = MAX_TOP_AMPLITUDES_QUBITS
 
 
 def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
@@ -51,22 +61,40 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             f"{num_qubits} qubits; watch for bond-dimension growth."
         )
 
-    counts, run_warnings = run_aer(
+    run_result = run_aer_with_state(
         request,
         method="matrix_product_state",
         shots=options.shots,
         seed=options.seed,
         noise_model=None,
         backend_options=backend_options,
+        want_state=options.include_state_analysis,
+        save_instruction="save_statevector",
+        max_state_qubits=MAX_STATE_QUBITS,
     )
-    warnings.extend(run_warnings)
+    warnings.extend(run_result.warnings)
+
+    state_analysis = build_state_analysis(
+        run_result,
+        num_qubits=num_qubits,
+        source_engine=ENGINE_ID,
+        kind="statevector",
+        detail=options.state_detail,
+        max_amplitudes=options.max_returned_amplitudes,
+        top_k=options.top_k_states,
+    )
+    if state_analysis is not None and state_analysis.get("available") and truncation_configured:
+        state_analysis["warnings"].append(
+            "An MPS bond limit or truncation threshold was configured for this run; the displayed "
+            "state may be approximate rather than exact."
+        )
 
     reason = (
         f"Matrix Product State simulation chosen for {num_qubits} qubits "
         "(scales well when entanglement stays low)."
     )
     return EngineResult(
-        counts=counts,
+        counts=run_result.counts,
         selected_engine=ENGINE_ID,
         engine_reason=reason,
         warnings=warnings,
@@ -84,4 +112,5 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             "mps_max_bond_dimension": options.mps_max_bond_dimension,
             "mps_truncation_threshold": options.mps_truncation_threshold,
         },
+        state_analysis=state_analysis,
     )

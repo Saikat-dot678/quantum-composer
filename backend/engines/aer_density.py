@@ -14,7 +14,13 @@ from analysis.resource_estimator import (
     density_matrix_log2_bytes,
     feasibility_from_log2_bytes,
 )
-from engines.aer_common import build_depolarizing_noise_model, prepare_circuit, run_aer
+from analysis.state_postprocessing import MAX_DENSITY_MATRIX_ANALYSIS_QUBITS
+from engines.aer_common import (
+    build_depolarizing_noise_model,
+    build_state_analysis,
+    prepare_circuit,
+    run_aer_with_state,
+)
 from engines.base import EngineResult, InfeasibleCircuitError
 
 ENGINE_ID = "aer_density_matrix"
@@ -79,17 +85,29 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             "statevector but use 16 * 4**n bytes."
         )
 
-    counts, run_warnings = run_aer(
+    run_result = run_aer_with_state(
         request,
         method="density_matrix",
         shots=options.shots,
         seed=options.seed,
         noise_model=noise_model,
+        want_state=options.include_state_analysis,
+        save_instruction="save_density_matrix",
+        max_state_qubits=MAX_DENSITY_MATRIX_ANALYSIS_QUBITS,
+        no_measurement_semantic_point="mixed_final_state",
     )
-    warnings.extend(run_warnings)
+    warnings.extend(run_result.warnings)
+
+    state_analysis = build_state_analysis(
+        run_result,
+        num_qubits=num_qubits,
+        source_engine=ENGINE_ID,
+        kind="density_matrix",
+        include_density_matrix=options.include_density_matrix,
+    )
 
     return EngineResult(
-        counts=counts,
+        counts=run_result.counts,
         selected_engine=ENGINE_ID,
         engine_reason=(
             f"Density-matrix simulation of {num_qubits} qubits "
@@ -101,4 +119,5 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             "noise_enabled": options.noise_enabled,
             "memory_risk": risk,
         },
+        state_analysis=state_analysis,
     )

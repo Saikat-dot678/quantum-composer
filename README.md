@@ -55,10 +55,15 @@ honest about the hard limits of classical simulation.
   inspector renders a local ideal-state preview (basis probabilities, phases,
   and a 1-qubit Bloch projection), transparently resolving any custom gates
   first — above the qubit cap, or when a custom gate can't be resolved, it
-  explains why instead of showing a silently wrong result. The canvas has one
-  tab stop; arrow keys move a keyboard cursor and an aria-live region
-  announces its cell, since a zoomable spatial canvas can't expose one
-  focusable DOM node per cell at scale.
+  explains why instead of showing a silently wrong result. It is explicitly
+  labeled "Live ideal preview — calculated locally in this browser," never
+  presented as a simulation result, with two one-click actions next to it:
+  **Open in Simulator Lab** (hand off and run for the actual backend state)
+  and **Compare with backend result** (a small local-vs-backend probability
+  table for the same circuit). The canvas has one tab stop; arrow keys move a
+  keyboard cursor and an aria-live region announces its cell, since a
+  zoomable spatial canvas can't expose one focusable DOM node per cell at
+  scale.
 - Presets: superposition, Bell, GHZ, teleportation skeleton, Deutsch–Jozsa,
   Grover, BB84.
 
@@ -73,6 +78,27 @@ honest about the hard limits of classical simulation.
 - Circuit analysis: Clifford classification, T-count / rotation count,
   statevector **and** density-matrix memory estimates, feasibility badge, and
   recommended engines — computed *before* running.
+- **Post-simulation quantum state analysis** (opt-in, off by default so an
+  ordinary run stays lightweight): a "Quantum State" result tab shows the
+  *actual backend-returned* state, not a re-labeled local preview — exact
+  amplitudes/probabilities/phases (Dirac notation, a sortable table, a phase
+  wheel with an always-paired numeric readout), per-qubit reduced Bloch
+  spheres (a qubit selector, never one sphere for a multi-qubit state, with a
+  plain-language note on *why* a reduced state is mixed when entangled),
+  density-matrix diagnostics (trace, purity, entropy, Hermiticity, a bounded
+  magnitude heatmap with an accessible table fallback) for the noise-capable
+  engine, and entanglement metrics (two-qubit concurrence, Schmidt
+  coefficients/entropy per bipartition) — with an explicit disclaimer that
+  this is not a complete entanglement classification for arbitrary mixed,
+  multipartite states. A terminally-measured circuit gets a clearly labeled
+  pre-measurement analysis copy; a genuinely mid-circuit-measured one gets an
+  honest "unavailable" reason instead of a fabricated state. JSON (full
+  schema, metrics, warnings) and CSV (amplitude/probability table) export.
+  Every size limit here (full-amplitude/density-matrix payload qubit caps,
+  top-k truncation, bounded table/heatmap rendering) is independent of, and
+  never larger than, the engine's own simulation qubit cap — see
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+  [docs/SIMULATION_ENGINES.md](docs/SIMULATION_ENGINES.md).
 - Large-circuit teaching presets that show what scales (100-qubit GHZ via MPS,
   1000-qubit Clifford via stabilizer) and what does not (arbitrary 100-qubit
   non-Clifford is rejected with an explanation).
@@ -220,6 +246,17 @@ switches engine lanes, and runs BB84 with Eve enabled. Each test in it skips
 itself if the backend isn't reachable, so `npm run test:e2e` stays green
 without it running.
 
+`e2e/state-analysis.spec.ts` and `e2e/state-analysis-visual.spec.ts` are the
+same backend-dependent, self-skipping convention, exercising the
+post-simulation quantum-state pipeline against the real backend: reference-
+state Bloch vectors (`H|0>`, `X|0>`, `S.H|0>`), the Bell-state reduced-qubit
+regression, terminal- and mid-circuit-measurement semantics, a noisy
+density-matrix result, a real JSON-export download, the mobile layout, axe
+scans of every new state view, and six screenshot baselines (the latter file
+is additionally skipped in CI, like `visual.spec.ts`, since baselines are
+platform-specific — refresh locally with
+`npx playwright test e2e/state-analysis-visual.spec.ts --update-snapshots`).
+
 ### Workspace model
 
 The app is an **Instrument Canvas**: a slim 56px top bar (product mark, a
@@ -246,7 +283,10 @@ route. The circuit lives in a workspace provider shared across routes:
 - **Live state preview** — for ≤5 qubits the Composer computes the ideal state
   locally: basis probabilities with phases, an interactive **Bloch sphere**
   (drag or arrow keys) for one qubit, and a concurrence-based entanglement
-  readout for two. Above that it explains the exponential wall instead.
+  readout for two. Above that it explains the exponential wall instead. It is
+  explicitly labeled as a local, ideal preview, with one-click actions to open
+  the same circuit in Simulator Lab or compare it against a real backend
+  result (see "Simulator Lab" above).
 
 Open `http://localhost:3000`. Copy `.env.example` to `.env.local` only if the
 API is not at `http://localhost:8000`.
@@ -282,7 +322,10 @@ intended ownership is stable:
   `CircuitInspector`, `OutputDock`, and composer orchestration;
 - `components/simulator/` — `EngineScalingChart`, `EngineStrip` +
   `lib/engineLanes.ts` (the engine-compatibility data model), circuit
-  analysis, results, sources/options controls, and engine availability;
+  analysis, results, sources/options controls, engine availability, and
+  `state/` (the Quantum State result tab's Overview/Probabilities/Phases/
+  Bloch/Density Matrix/Entanglement sub-views, plus the shared
+  `AmplitudeTable`);
 - `components/crypto/` — `ProtocolDiagram` (the actor/channel visualization),
   shared protocol navigation, plus BB84, E91, B92, and QRNG result panels;
 - `components/output/` — generated code, measurement results, and histograms;
@@ -321,6 +364,9 @@ added.
 - `GET /engines` — available engines, dependency status, and honest limits.
 - `POST /circuit/analyze` — structure + resource-feasibility analysis.
 - `POST /circuit/simulate-v2` — engine-routed simulation (`{ circuit, options }`).
+  `options.include_state_analysis` (default `false`) additionally returns the
+  actual backend-computed quantum state — see
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 **V2 — cryptography lab:**
 - `POST /crypto/bb84/simulate`
@@ -394,8 +440,8 @@ With the backend on `:8000` and the frontend on `:3000`:
 7. **Optional Stim** — `GET /engines` shows `stim_stabilizer` available only if
    `stim` is installed; the UI and router behave correctly either way.
 
-Backend contract equivalents run headless via `python -m pytest -q` (76 tests in
-the current suite). CI runs backend tests plus frontend lint/typecheck/build
+Backend contract equivalents run headless via `python -m pytest -q` (130 tests
+in the current suite). CI runs backend tests plus frontend lint/typecheck/build
 checks; it does not automate the browser interactions listed above.
 
 ## Limits and current scope
@@ -421,12 +467,24 @@ checks; it does not automate the browser interactions listed above.
 - Custom gates exist (matrix, decomposition, and composite/macro
   definitions — see [docs/CUSTOM_GATES.md](docs/CUSTOM_GATES.md)), but no
   dynamic (mid-circuit classical-condition) gates or real hardware execution
-  yet — see the [roadmap](docs/BEAST_MODE_ROADMAP.md). The statevector/Bloch
-  preview that does exist is a local, ideal-state approximation for ≤5
-  qubits, not a general viewer for arbitrary circuit sizes. Custom gates are
-  never automatically classified as Clifford-compatible from a matrix alone —
-  only decomposition/composite gates that flatten entirely into Clifford
-  built-ins are recognized as such.
+  yet — see the [roadmap](docs/BEAST_MODE_ROADMAP.md). Composer's own
+  statevector/Bloch preview is a local, ideal-state approximation for ≤5
+  qubits, not a general viewer for arbitrary circuit sizes or a simulation
+  result — Simulator Lab's opt-in "Quantum State" tab is the actual
+  backend-computed state. Custom gates are never automatically classified as
+  Clifford-compatible from a matrix alone — only decomposition/composite
+  gates that flatten entirely into Clifford built-ins are recognized as such.
+  A pre-existing timing gap in the Composer→Simulator-Lab custom-gate handoff
+  (discovered, not introduced, while building the state-analysis viewers) can
+  cause an unresolved custom gate to be honestly rejected (422) instead of
+  analyzed — see `audit.md`.
+- Post-simulation quantum-state analysis is opt-in and has its own qubit
+  ceilings, independent of (and never larger than) each engine's own
+  simulation cap: a full amplitude list stops at 12 qubits, any state
+  analysis at all stops at 20, a full density-matrix payload stops at 8, and
+  density-matrix metrics stop at 15 — see
+  [docs/SIMULATION_ENGINES.md](docs/SIMULATION_ENGINES.md) for the complete
+  table. A stabilizer-engine result is a generator summary, never amplitudes.
 - Estimator budgets and qubit caps reduce accidental resource use but do not
   replace process/container memory limits, concurrency control, or timeouts.
 

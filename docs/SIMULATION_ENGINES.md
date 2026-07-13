@@ -135,6 +135,53 @@ different labels. Neither value certifies that the host currently has that much
 free memory. The exact-engine caps still allow allocations around 16 GiB at
 30 statevector qubits or 15 density-matrix qubits.
 
+## Post-simulation quantum-state analysis
+
+Beyond sampled counts, `/circuit/simulate-v2` can optionally return the
+**actual state the engine computed** for that run (`include_state_analysis`
+in `SimulationOptions`; see [ARCHITECTURE.md](ARCHITECTURE.md) for the full
+pipeline). What comes back — and whether anything can come back at all —
+depends entirely on the engine, independent of how large a *simulation* that
+engine can otherwise run:
+
+| Engine | State representation | Exact or approximate | Measurement semantics | Extra restriction |
+| --- | --- | --- | --- | --- |
+| `aer_statevector` | full statevector (amplitudes, phases, Bloch vectors, entanglement) | exact | final / pre-measurement | none beyond the shared qubit caps below |
+| `aer_mps` | full statevector, via Aer's own internal MPS→statevector conversion | exact **only if** no truncation was configured; otherwise approximate (flagged in `warnings`) | final / pre-measurement | gated at the *same* qubit cap as `aer_statevector`'s state extraction (not the engine's own much larger simulation limit) — converting a large MPS run's tensors to a full state to display it is exactly the unsafe materialization this limit exists to prevent |
+| `aer_density_matrix` | full density matrix (mixed-capable: trace, purity, entropy, Hermiticity, per-qubit reduced states) | exact | final (`mixed_final_state`) / pre-measurement | payload and analysis both capped well below the engine's own qubit ceiling |
+| `aer_stabilizer` | stabilizer generator summary only — **never** amplitudes | exact (as a stabilizer description) | final / pre-measurement | amplitudes, phases, and Bloch vectors are structurally unavailable from a stabilizer tableau in this implementation, not merely omitted |
+| `stim_stabilizer` | stabilizer generator summary only, via a second, separate `stim.TableauSimulator` pass (Stim's own sampling API has no save-instruction equivalent) | exact (as a stabilizer description) | final / pre-measurement | same as `aer_stabilizer`; the extra pass is polynomial-time even at huge qubit counts, so it is not a "duplicate expensive simulation" |
+
+**Payload and analysis limits** (independent of, and always ≤, the
+engine's own simulation qubit cap — "simulation feasibility is not
+visualization feasibility"):
+
+| Limit | Qubits | Approximate payload at the cap |
+| --- | --- | --- |
+| Full amplitude list | ≤ 12 | 4096 amplitudes × 16 B ≈ 64 KiB |
+| Any state analysis at all (even a top-k summary) | ≤ 20 | up to ~1,048,576 amplitudes transiently ≈ 16 MiB |
+| Full density-matrix JSON payload | ≤ 8 | 256×256 complex entries ≈ 1 MiB |
+| Density-matrix metrics (trace/purity/entropy/reduced states, no full matrix) | ≤ 15 | matches `aer_density_matrix`'s own existing engine cap |
+| Entanglement / Schmidt-decomposition calculations | ≤ 12 | shares the full-amplitude-list limit (an SVD of comparable size) |
+| Stabilizer generator list | ≤ 128 | payload-size guard only — generator tracking itself stays polynomial-time far beyond this |
+
+**MPS-specific restriction, stated plainly:** Aer's public API converts an
+MPS tensor chain to a full statevector internally when a state is requested
+from it — there is no cheaper native extraction for reduced per-qubit states
+directly from the raw tensors implemented here. A large, low-entanglement MPS
+circuit therefore keeps simulating (and returning `counts`) far beyond 20
+qubits, but its **state analysis** stops at the same qubit count the exact
+statevector engine's own state extraction does; above that, the response
+says so (`unavailable_reason`) instead of attempting the conversion.
+
+**Visualization limits, separately from either of the above:** even inside a
+payload that the backend is willing to return, the frontend never renders an
+unbounded amplitude table or an unbounded density-matrix grid. Amplitude/
+probability tables cap the number of rendered rows with a "+N more, use the
+export" footer; the density-matrix heatmap only renders as a grid up to 16×16
+cells (4 qubits) and otherwise points at the JSON/CSV export instead of
+building thousands of DOM cells.
+
 ## When to use which engine
 
 - Learning a small algorithm, want the diagram and exact counts → **statevector**

@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from engines.aer_common import run_aer
+from analysis.state_postprocessing import MAX_STABILIZER_SUMMARY_QUBITS
+from engines.aer_common import build_state_analysis, run_aer_with_state
 from engines.base import EngineResult, UnsupportedGateError
 
 ENGINE_ID = "aer_stabilizer"
@@ -26,21 +27,32 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             "rotations, or use the statevector/MPS engine instead."
         )
 
-    counts, warnings = run_aer(
+    run_result = run_aer_with_state(
         request,
         method="stabilizer",
         shots=options.shots,
         seed=options.seed,
         noise_model=None,
+        want_state=options.include_state_analysis,
+        save_instruction="save_stabilizer",
+        max_state_qubits=MAX_STABILIZER_SUMMARY_QUBITS,
+    )
+
+    state_analysis = build_state_analysis(
+        run_result,
+        num_qubits=analysis["num_qubits"],
+        source_engine=ENGINE_ID,
+        kind="stabilizer",
     )
 
     return EngineResult(
-        counts=counts,
+        counts=run_result.counts,
         selected_engine=ENGINE_ID,
         engine_reason=(
             f"Circuit is Clifford-only on {analysis['num_qubits']} qubits; the "
             "stabilizer formalism simulates it exactly in polynomial memory."
         ),
-        warnings=warnings,
+        warnings=run_result.warnings,
         metadata={"method": "stabilizer", "is_clifford": True},
+        state_analysis=state_analysis,
     )

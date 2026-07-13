@@ -5,18 +5,47 @@
 // Bloch sphere for one qubit (lazy-loaded), and an honest entanglement hint
 // for two qubits. Above the preview bound it teaches the exponential wall
 // instead of rendering.
+//
+// This is explicitly NOT a simulation result: it is an ideal, local,
+// browser-computed preview, kept clearly labeled as such (see
+// docs/ARCHITECTURE.md's state-analysis section). The actual backend
+// statevector -- with real engine routing, measurement semantics, and the
+// full Quantum State views (Probabilities/Phases/Bloch/Density
+// Matrix/Entanglement) -- lives in Simulator Lab; the two actions below hand
+// off to it or fetch one comparison point on demand. Neither ever runs
+// automatically on edit -- both are explicit clicks.
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { useMemo } from "react";
-import { Badge, Spinner } from "@/components/ui/primitives";
+import { useEffect, useMemo, useState } from "react";
+import { Badge, Button, Spinner } from "@/components/ui/primitives";
+import { useWorkspace } from "@/components/workspace/WorkspaceProvider";
 import type { CustomDefinition } from "@/lib/customGates";
 import { resolveCustomOperations } from "@/lib/customGateResolve";
+import { labApi } from "@/lib/labApi";
+import type { AmplitudeEntry } from "@/lib/labTypes";
 import { computeStatePreview, MAX_PREVIEW_QUBITS, type StatePreview } from "@/lib/statevector";
 import type { CircuitData } from "@/lib/types";
+import { ArrowRight, GitCompareArrows } from "lucide-react";
 
 const BlochSphere3D = dynamic(() => import("./BlochSphere3D"), {
   ssr: false,
   loading: () => <Spinner label="Loading Bloch sphere" />,
 });
+
+const COMPARISON_SHOTS = 64;
+
+interface ComparisonRow {
+  basis: string;
+  localProbability: number;
+  backendProbability: number;
+}
+
+type ComparisonState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "unavailable"; reason: string }
+  | { kind: "done"; sourceEngine: string; rows: ComparisonRow[] };
 
 const RAD_TO_DEG = 180 / Math.PI;
 const SHOWN_STATES = 6;
@@ -40,17 +69,125 @@ function entanglementHint(value: number): { tone: "violet" | "green" | "neutral"
 }
 
 export function StatePreviewPanel({ circuit, customLibrary }: { circuit: CircuitData; customLibrary?: ReadonlyMap<string, CustomDefinition> }) {
+  const router = useRouter();
+  const { setLabCircuit } = useWorkspace();
   const resolved = useMemo(() => resolveCustomOperations(circuit, customLibrary ?? new Map()), [circuit, customLibrary]);
   const preview = useMemo(() => (resolved.ok && resolved.circuit ? computeStatePreview(resolved.circuit) : null), [resolved]);
   const entanglement = useMemo(() => (preview ? concurrence(preview) : null), [preview]);
   const blockedReason = !resolved.ok ? resolved.reason : null;
 
+  const [comparison, setComparison] = useState<ComparisonState>({ kind: "idle" });
+  // A stale comparison for a circuit the user has since edited would be
+  // misleading -- drop it the moment the circuit changes. This never
+  // triggers a new backend call by itself; it only clears the old one.
+  useEffect(() => setComparison({ kind: "idle" }), [circuit, customLibrary]);
+
+  function openInSimulatorLab() {
+    if (!resolved.ok || !resolved.circuit) return;
+    setLabCircuit(resolved.circuit);
+    router.push("/simulator");
+  }
+
+  async function compareWithBackend() {
+    if (!resolved.ok || !resolved.circuit) return;
+    setComparison({ kind: "loading" });
+    try {
+      const response = await labApi.simulateV2(resolved.circuit, {
+        engine: "auto",
+        shots: COMPARISON_SHOTS,
+        noise_enabled: false,
+        noise_model_type: "depolarizing",
+        max_memory_mb: 1024,
+        allow_approximation: false,
+        mps_max_bond_dimension: null,
+        mps_truncation_threshold: null,
+        seed: null,
+        include_state_analysis: true,
+        state_detail: "full",
+      });
+      const state = response.state_analysis;
+      if (!state || !state.available) {
+        setComparison({ kind: "unavailable", reason: state?.unavailable_reason ?? "The backend did not return a state analysis for this circuit." });
+        return;
+      }
+      const backendByBasis = new Map<string, number>();
+      for (const entry of (state.amplitudes ?? state.top_states ?? []) as AmplitudeEntry[]) backendByBasis.set(entry.basis, entry.probability);
+      const rows: ComparisonRow[] = (preview?.entries ?? [])
+        .filter((entry) => entry.probability > 1e-9 || (backendByBasis.get(entry.basis) ?? 0) > 1e-9)
+        .map((entry) => ({ basis: entry.basis, localProbability: entry.probability, backendProbability: backendByBasis.get(entry.basis) ?? 0 }))
+        .sort((left, right) => right.backendProbability - left.backendProbability);
+      setComparison({ kind: "done", sourceEngine: response.selected_engine, rows });
+    } catch (error) {
+      setComparison({ kind: "error", message: error instanceof Error ? error.message : "The comparison request failed." });
+    }
+  }
+
   return (
     <section className="mt-5 border-t border-lab-border pt-4" aria-labelledby="state-preview-heading">
       <div className="flex items-center justify-between gap-2">
-        <h2 id="state-preview-heading" className="instrument-label">Live state preview</h2>
+        <h2 id="state-preview-heading" className="instrument-label">Live ideal preview <span className="font-normal normal-case text-lab-faint">— calculated locally in this browser</span></h2>
         <Badge tone={preview ? "cyan" : "neutral"}>{preview ? "ideal · local" : blockedReason ? "blocked" : `> ${MAX_PREVIEW_QUBITS} qubits`}</Badge>
       </div>
+      <p className="mt-1 text-[10px] leading-4 text-lab-faint">
+        Not a simulation result: an idealized, noiseless state recomputed instantly as you edit. For the actual
+        backend-simulated quantum state — with real engine routing, honest measurement semantics, and full
+        probability/phase/Bloch/entanglement views — use the actions below.
+      </p>
+
+      {resolved.ok && resolved.circuit && (
+        <div className="mt-2.5 flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={openInSimulatorLab}>
+            <ArrowRight className="h-3.5 w-3.5" /> Open in Simulator Lab
+          </Button>
+          <Button size="sm" variant="quiet" loading={comparison.kind === "loading"} onClick={() => void compareWithBackend()}>
+            <GitCompareArrows className="h-3.5 w-3.5" /> Compare with backend result
+          </Button>
+        </div>
+      )}
+
+      {comparison.kind === "error" && (
+        <p role="alert" className="mt-2 rounded-md border border-dashed border-danger-border bg-danger-bg px-3 py-2 text-[11px] leading-4 text-danger-text">
+          Comparison failed: {comparison.message}
+        </p>
+      )}
+      {comparison.kind === "unavailable" && (
+        <p role="status" className="mt-2 rounded-md border border-dashed border-lab-border px-3 py-2 text-[11px] leading-4 text-lab-faint">
+          Backend comparison unavailable: {comparison.reason}
+        </p>
+      )}
+      {comparison.kind === "done" && (
+        <div className="mt-2.5 rounded-lg border border-lab-border bg-lab-raised/40 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="instrument-label">Local preview vs. {comparison.sourceEngine} (exact)</p>
+            <Badge tone="cyan">both theoretical, no sampling</Badge>
+          </div>
+          <table className="mt-2 w-full border-collapse text-left text-[11px]">
+            <thead>
+              <tr className="border-b border-lab-border text-lab-faint">
+                <th scope="col" className="py-1 pr-3 font-medium">Basis</th>
+                <th scope="col" className="py-1 pr-3 font-medium">Local</th>
+                <th scope="col" className="py-1 pr-3 font-medium">Backend</th>
+                <th scope="col" className="py-1 pr-3 font-medium">|Δ|</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comparison.rows.map((row) => (
+                <tr key={row.basis} className="border-b border-lab-border/60">
+                  <td className="py-1 pr-3 font-mono text-lab-text">|{row.basis}⟩</td>
+                  <td className="py-1 pr-3 font-mono text-lab-muted">{(row.localProbability * 100).toFixed(1)}%</td>
+                  <td className="py-1 pr-3 font-mono text-lab-muted">{(row.backendProbability * 100).toFixed(1)}%</td>
+                  <td className="py-1 pr-3 font-mono text-lab-faint">{(Math.abs(row.localProbability - row.backendProbability) * 100).toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-2 text-[10px] leading-4 text-lab-faint">
+            Both columns are exact theoretical probabilities (no shot noise) — the local preview&apos;s ideal math
+            against the backend engine&apos;s actual returned state. A nonzero difference points to a real
+            divergence (e.g. a custom gate resolving differently) rather than sampling variance.
+          </p>
+        </div>
+      )}
 
       {blockedReason ? (
         <p role="status" className="mt-2 rounded-md border border-dashed border-danger-border bg-danger-bg px-3 py-2 text-[11px] leading-4 text-danger-text">

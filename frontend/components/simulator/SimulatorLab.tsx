@@ -13,6 +13,7 @@ import type {
   LabPreset,
   SimulationOptions,
   SimulationV2Response,
+  StateDetail,
 } from "@/lib/labTypes";
 import type { CircuitData } from "@/lib/types";
 import { Activity, Play, RefreshCw } from "lucide-react";
@@ -107,6 +108,9 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
   const [maxMemoryMb, setMaxMemoryMb] = useState<number>(LIMITS.simulation.defaultMemoryBudgetMb);
   const [mpsBondDimension, setMpsBondDimension] = useState<OptionalNumber>("");
   const [mpsTruncationThreshold, setMpsTruncationThreshold] = useState<OptionalNumber>("");
+  const [includeStateAnalysis, setIncludeStateAnalysis] = useState(false);
+  const [stateDetail, setStateDetail] = useState<StateDetail>("summary");
+  const [includeDensityMatrix, setIncludeDensityMatrix] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
 
   const [engines, setEngines] = useState<EnginesResponse | null>(null);
@@ -370,6 +374,24 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
     setMpsTruncationThreshold(value === "" ? "" : clampFloat(value, Number.EPSILON, 1, Number.EPSILON));
   }
 
+  function updateIncludeStateAnalysis(enabled: boolean) {
+    if (runLoading) return;
+    invalidateRun();
+    setIncludeStateAnalysis(enabled);
+  }
+
+  function updateStateDetail(value: StateDetail) {
+    if (runLoading) return;
+    invalidateRun();
+    setStateDetail(value);
+  }
+
+  function updateIncludeDensityMatrix(enabled: boolean) {
+    if (runLoading) return;
+    invalidateRun();
+    setIncludeDensityMatrix(enabled);
+  }
+
   async function runSimulation() {
     if (runLoading) return;
     if (selectedEngineAvailable === false) {
@@ -395,6 +417,9 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
       mps_max_bond_dimension: normalizedBond,
       mps_truncation_threshold: normalizedThreshold,
       seed: normalizedSeed,
+      include_state_analysis: includeStateAnalysis,
+      state_detail: stateDetail,
+      include_density_matrix: includeDensityMatrix,
     };
 
     setShots(normalizedShots);
@@ -541,6 +566,9 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
             maxMemoryMb={maxMemoryMb}
             mpsBondDimension={mpsBondDimension}
             mpsTruncationThreshold={mpsTruncationThreshold}
+            includeStateAnalysis={includeStateAnalysis}
+            stateDetail={stateDetail}
+            includeDensityMatrix={includeDensityMatrix}
             analysisLoading={analysisLoading}
             runLoading={runLoading}
             onLoadComposer={loadComposerCircuit}
@@ -552,6 +580,9 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
             onMaxMemoryChange={updateMaxMemory}
             onMpsBondDimensionChange={updateMpsBondDimension}
             onMpsTruncationThresholdChange={updateMpsTruncationThreshold}
+            onIncludeStateAnalysisChange={updateIncludeStateAnalysis}
+            onStateDetailChange={updateStateDetail}
+            onIncludeDensityMatrixChange={updateIncludeDensityMatrix}
             onAnalyze={() => void requestAnalysis(circuit, true)}
             onRun={() => void runSimulation()}
           />

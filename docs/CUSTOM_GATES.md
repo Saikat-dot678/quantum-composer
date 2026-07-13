@@ -230,6 +230,37 @@ work — a safe default that was correct (if pessimistic for expandable
 custom gates) and was left unchanged; it is advisory-only and never gates a
 real backend call.
 
+## Post-simulation state analysis
+
+Post-simulation quantum-state analysis (`include_state_analysis` on
+`SimulationOptions` — see [ARCHITECTURE.md](ARCHITECTURE.md)) needed **no
+custom-gate-specific code at all**: it always runs on the resolved circuit
+handed to `/circuit/simulate-v2`, which is already fully flattened
+(decomposition/composite gates into built-ins, matrix gates into a single
+`"unitary"` operation) by the same resolver described above. A matrix-defined
+custom gate's Bloch vector, probabilities, phases, and entanglement metrics
+are therefore identical to what a built-in circuit containing an equivalent
+`UnitaryGate` would produce — verified directly with a backend integration
+test that sends a `unitary` operation built from an explicit Pauli-X matrix
+alongside `h`/`cx` and requests full state analysis.
+
+**A pre-existing gap in the Composer → Simulator Lab handoff was found while
+verifying this end-to-end through the real UI**, not introduced by state
+analysis. `ComposerMode.tsx`'s `openSimulatorLab()` correctly resolves the
+circuit before handing it off (confirmed directly: logging the resolved
+circuit's gate list at the moment of the click shows `["unitary"]` as
+expected), but by the time Simulator Lab actually sends its
+`/circuit/simulate-v2` request, the circuit it holds can revert to the raw,
+unresolved `"custom"` operation — which the backend correctly rejects (422)
+rather than silently producing a wrong result. Two targeted fixes to the
+one-shot `labCircuit` handoff in `app/simulator/page.tsx` were tried and
+reverted after neither resolved it empirically; the likely cause is a timing
+interaction in the client-side route transition deeper than a component-level
+fix reached in this pass (see `audit.md`'s "Custom-gate integration" section
+for the full investigation). Every other path — including a circuit with no
+custom gates, or state analysis running directly against a resolved circuit
+via the API — is unaffected.
+
 ## Safety summary
 
 - Never `eval`, never `Function()`, never executes imported JS/Python, never
@@ -261,4 +292,8 @@ real backend call.
 - Simulator Lab (the separate large/generated-circuit analysis mode) has no
   custom-gate concept of its own; "Open in Simulator Lab" hands it the
   already-resolved (flattened) circuit rather than an unrenderable custom
-  block.
+  block. **A timing gap in that handoff** can cause the raw, unresolved
+  circuit to reach the backend instead (an honest 422 rejection, not a wrong
+  result) — discovered while integrating post-simulation state analysis, not
+  fixed in that pass; see "Post-simulation state analysis" above and
+  `audit.md` for the investigation.

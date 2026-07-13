@@ -274,4 +274,5 @@ def simulate(request: Any, options: Any) -> dict[str, Any]:
             "is_clifford": analysis["is_clifford"],
             "feasibility_status": analysis["feasibility_status"],
         },
+        "state_analysis": result.state_analysis,
     }

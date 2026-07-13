@@ -79,6 +79,8 @@ export interface CircuitAnalysis {
   resource_estimate: ResourceEstimate;
 }
 
+export type StateDetail = "summary" | "top_amplitudes" | "full";
+
 export interface SimulationOptions {
   engine: EngineId;
   shots: number;
@@ -89,6 +91,101 @@ export interface SimulationOptions {
   mps_max_bond_dimension: number | null;
   mps_truncation_threshold: number | null;
   seed: number | null;
+  // Optional post-simulation state analysis (see lib/stateAnalysis.ts) --
+  // omitted/false by default, so an ordinary simulation call stays exactly
+  // as lightweight as before. Every limit here is re-enforced server-side
+  // regardless of what is requested.
+  include_state_analysis?: boolean;
+  state_detail?: StateDetail;
+  include_density_matrix?: boolean;
+  max_returned_amplitudes?: number;
+  top_k_states?: number;
+}
+
+// --- Post-simulation quantum-state analysis --------------------------------
+//
+// Mirrors backend/schemas.py's StateAnalysisResponse and friends exactly --
+// see docs/ARCHITECTURE.md for the full semantics writeup and
+// backend/analysis/state_postprocessing.py for the numerics. Complex
+// numbers are always a {re, im} pair, never a bare number, matching the
+// backend's safe-JSON contract.
+
+export type StateRepresentation = "statevector" | "density_matrix" | "stabilizer_summary";
+export type StateSemanticPoint = "final_state" | "pre_measurement_state" | "mixed_final_state";
+
+export interface ComplexNumber {
+  re: number;
+  im: number;
+}
+
+export interface AmplitudeEntry {
+  index: number | null;
+  basis: string;
+  /** null for a density-matrix diagonal entry -- a mixed state has no single well-defined per-basis phase. */
+  amplitude: ComplexNumber | null;
+  probability: number;
+  phase_radians: number | null;
+  phase_degrees: number | null;
+}
+
+export interface BlochVectorXYZ {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface PerQubitState {
+  qubit: number;
+  bloch_vector: BlochVectorXYZ;
+  bloch_magnitude: number;
+  purity: number;
+  von_neumann_entropy_bits: number;
+  expectation_x: number;
+  expectation_y: number;
+  expectation_z: number;
+  probability_0: number;
+  probability_1: number;
+  is_mixed: boolean;
+  marginal_probability_1: number | null;
+}
+
+export interface BipartitionEntanglement {
+  partition_a: number[];
+  partition_b: number[];
+  schmidt_coefficients: number[];
+  schmidt_rank: number;
+  entanglement_entropy_bits: number;
+}
+
+export interface EntanglementSummary {
+  concurrence: number | null;
+  concurrence_note: string | null;
+  bipartitions: BipartitionEntanglement[];
+  global_purity: number | null;
+  per_qubit_purity: number[];
+  product_state_indicator: boolean | null;
+  explanation: string;
+}
+
+export interface StateAnalysisResponse {
+  available: boolean;
+  representation: StateRepresentation | null;
+  source_engine: string | null;
+  semantic_point: StateSemanticPoint | null;
+  qubit_order: string;
+  num_qubits: number | null;
+  normalized: boolean | null;
+  normalization_error: number | null;
+  amplitudes: AmplitudeEntry[] | null;
+  density_matrix: ComplexNumber[][] | null;
+  basis_probabilities: AmplitudeEntry[] | null;
+  top_states: AmplitudeEntry[] | null;
+  per_qubit: PerQubitState[] | null;
+  entanglement: EntanglementSummary | null;
+  /** Different representations report different metric sets (statevector: purity/amplitude counts/global-phase note; density matrix: trace/Hermiticity/entropy; stabilizer: generator list). */
+  global_metrics: Record<string, unknown> | null;
+  warnings: string[];
+  unavailable_reason: string | null;
 }
 
 export interface SimulationV2Response {
@@ -102,6 +199,7 @@ export interface SimulationV2Response {
   timing_ms: number;
   diagram: string | null;
   metadata: Record<string, unknown>;
+  state_analysis: StateAnalysisResponse | null;
 }
 
 // --- Large structured circuits -------------------------------------------

@@ -6,6 +6,7 @@ import type { SimulationV2Response } from "@/lib/labTypes";
 import { AlertTriangle, Play, RefreshCw } from "lucide-react";
 import { HistogramPanel } from "../ui/HistogramPanel";
 import { Badge, Button, CopyButton } from "../ui/primitives";
+import { QuantumStatePanel } from "./state/QuantumStatePanel";
 
 interface SimulationResultPanelProps {
   result: SimulationV2Response | null;
@@ -15,7 +16,7 @@ interface SimulationResultPanelProps {
   onRetry: () => void;
 }
 
-type ResultView = "distribution" | "diagnostics" | "diagram";
+type ResultView = "distribution" | "state" | "diagnostics" | "diagram";
 
 function phaseForElapsed(elapsedMs: number): string {
   if (elapsedMs < 900) return "Validating request and routing the circuit";
@@ -117,8 +118,10 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
   const autoSelected = result.metadata.auto_selected === true;
   const approximate = result.metadata.approximate === true;
   const requestedEngine = typeof result.metadata.requested_engine === "string" ? result.metadata.requested_engine : null;
+  const stateAvailable = result.state_analysis?.available === true;
   const views: Array<{ id: ResultView; label: string }> = [
     { id: "distribution", label: "Distribution" },
+    { id: "state", label: "Quantum State" },
     { id: "diagnostics", label: "Diagnostics" },
     { id: "diagram", label: "Diagram" },
   ];
@@ -152,6 +155,7 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
             className={`min-h-8 shrink-0 border-b-2 px-3 text-[11px] font-semibold transition ${view === item.id ? "border-accent-cyan text-accent-cyan" : "border-transparent text-lab-faint hover:text-lab-muted"}`}
           >
             {item.label}
+            {item.id === "state" && stateAvailable && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-accent-cyan align-middle" aria-hidden="true" />}
           </button>
         ))}
         <span className="ml-auto shrink-0 text-[9px] text-lab-faint">Transport and analysis excluded from timing</span>
@@ -180,6 +184,16 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
                 </ul>
               )}
             </div>
+          </div>
+        )}
+
+        {view === "state" && (
+          <div>
+            <div className="mb-3">
+              <p className="instrument-label">Simulated quantum state</p>
+              <p className="mt-1 text-[10px] text-lab-faint">The actual state returned by {formatEngineName(result.selected_engine)} for this run -- not the Composer&apos;s local live preview.</p>
+            </div>
+            <QuantumStatePanel state={result.state_analysis} />
           </div>
         )}
 
