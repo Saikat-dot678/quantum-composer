@@ -22,7 +22,34 @@ GateName = Literal[
     "swap",
     "measure",
     "barrier",
+    # Resolver-output-only (see frontend lib/customGateResolve.ts): the
+    # frontend's "custom" gates are never sent to this API directly.
+    # Decomposition/composite custom gates are flattened into the built-in
+    # gates above; only matrix-defined custom gates produce this one new
+    # gate, carrying its own literal matrix. The frontend never places
+    # "unitary" directly and it never round-trips through save/share.
+    "unitary",
 ]
+
+# Matches the frontend's lib/customGates.ts MAX_MATRIX_QUBITS /
+# DEFAULT_UNITARITY_TOLERANCE exactly, enforced again here since a request
+# body is never trusted just because a client-side check already ran.
+MAX_UNITARY_QUBITS = 3
+UNITARY_TOLERANCE = 1e-6
+
+
+def _unitarity_error(matrix: list[list[complex]]) -> float:
+    """Largest |()U . U-dagger)[i][k] - I[i][k]| observed, using Python's native complex type (no numpy needed for this check)."""
+    n = len(matrix)
+    max_error = 0.0
+    for i in range(n):
+        for k in range(n):
+            total = sum(matrix[i][j] * matrix[k][j].conjugate() for j in range(n))
+            expected = 1.0 if i == k else 0.0
+            error = abs(total - expected)
+            if error > max_error:
+                max_error = error
+    return max_error
 
 
 class CircuitOperation(BaseModel):
@@ -36,6 +63,12 @@ class CircuitOperation(BaseModel):
     # circuits (deep Clifford/MPS presets) legitimately use many time steps, so
     # the cap is generous. It only affects operation ordering, never resources.
     moment: int | None = Field(default=None, ge=0, le=1_000_000)
+    # Only meaningful when gate == "unitary": row-major 2^k x 2^k matrix,
+    # each entry a finite [real, imaginary] pair.
+    matrix: Optional[list[list[list[float]]]] = None
+    # Only meaningful when gate == "unitary": optional display label used
+    # only for generated-code readability (e.g. UnitaryGate(..., label=...)).
+    label: Optional[str] = Field(default=None, max_length=32)
 
     @field_validator("qubits", "clbits")
     @classmethod
@@ -76,6 +109,21 @@ class CircuitOperation(BaseModel):
             if self.clbits:
                 raise ValueError("barrier does not accept classical bits")
             self._expect_no_params()
+        elif self.gate == "unitary":
+            self._expect_no_params()
+            if self.clbits:
+                raise ValueError("unitary does not accept classical bits")
+            if not self.qubits:
+                raise ValueError("unitary requires at least one qubit")
+            if len(self.qubits) > MAX_UNITARY_QUBITS:
+                raise ValueError(
+                    f"unitary gates support at most {MAX_UNITARY_QUBITS} qubits "
+                    "-- the matrix doubles in size with every additional qubit"
+                )
+            self._validate_matrix()
+
+        if self.gate != "unitary" and self.matrix is not None:
+            raise ValueError(f"{self.gate} does not accept a matrix field")
         return self
 
     def _expect_shape(self, qubits: int, clbits: int) -> None:
@@ -89,6 +137,37 @@ class CircuitOperation(BaseModel):
     def _expect_no_params(self) -> None:
         if self.params:
             raise ValueError(f"{self.gate} does not accept parameters")
+
+    def _validate_matrix(self) -> None:
+        expected = 2 ** len(self.qubits)
+        if self.matrix is None:
+            raise ValueError("unitary requires a matrix")
+        if len(self.matrix) != expected:
+            raise ValueError(f"unitary matrix must be {expected}x{expected}")
+        parsed: list[list[complex]] = []
+        for row in self.matrix:
+            if len(row) != expected:
+                raise ValueError(f"unitary matrix must be {expected}x{expected}")
+            parsed_row: list[complex] = []
+            for entry in row:
+                if len(entry) != 2:
+                    raise ValueError("each matrix entry must be a [real, imaginary] pair")
+                re, im = entry
+                if isinstance(re, bool) or isinstance(im, bool):
+                    raise ValueError("matrix entries must be numeric")
+                if not (isinstance(re, (int, float)) and isinstance(im, (int, float))):
+                    raise ValueError("matrix entries must be numeric")
+                if not (math.isfinite(float(re)) and math.isfinite(float(im))):
+                    raise ValueError("matrix entries must be finite")
+                parsed_row.append(complex(float(re), float(im)))
+            parsed.append(parsed_row)
+        error = _unitarity_error(parsed)
+        if error > UNITARY_TOLERANCE:
+            raise ValueError(
+                "unitary matrix is not unitary within tolerance: U x U-dagger "
+                f"deviates from the identity by up to {error:.2e} "
+                f"(limit {UNITARY_TOLERANCE:.0e})"
+            )
 
 
 class CircuitRequest(BaseModel):

@@ -8,6 +8,8 @@
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
 import { Badge, Spinner } from "@/components/ui/primitives";
+import type { CustomDefinition } from "@/lib/customGates";
+import { resolveCustomOperations } from "@/lib/customGateResolve";
 import { computeStatePreview, MAX_PREVIEW_QUBITS, type StatePreview } from "@/lib/statevector";
 import type { CircuitData } from "@/lib/types";
 
@@ -37,18 +39,24 @@ function entanglementHint(value: number): { tone: "violet" | "green" | "neutral"
   return { tone: "green", label: "product state · C ≈ 0", note: "Each qubit could be described independently on its own Bloch sphere." };
 }
 
-export function StatePreviewPanel({ circuit }: { circuit: CircuitData }) {
-  const preview = useMemo(() => computeStatePreview(circuit), [circuit]);
+export function StatePreviewPanel({ circuit, customLibrary }: { circuit: CircuitData; customLibrary?: ReadonlyMap<string, CustomDefinition> }) {
+  const resolved = useMemo(() => resolveCustomOperations(circuit, customLibrary ?? new Map()), [circuit, customLibrary]);
+  const preview = useMemo(() => (resolved.ok && resolved.circuit ? computeStatePreview(resolved.circuit) : null), [resolved]);
   const entanglement = useMemo(() => (preview ? concurrence(preview) : null), [preview]);
+  const blockedReason = !resolved.ok ? resolved.reason : null;
 
   return (
     <section className="mt-5 border-t border-lab-border pt-4" aria-labelledby="state-preview-heading">
       <div className="flex items-center justify-between gap-2">
         <h2 id="state-preview-heading" className="instrument-label">Live state preview</h2>
-        <Badge tone={preview ? "cyan" : "neutral"}>{preview ? "ideal · local" : `> ${MAX_PREVIEW_QUBITS} qubits`}</Badge>
+        <Badge tone={preview ? "cyan" : "neutral"}>{preview ? "ideal · local" : blockedReason ? "blocked" : `> ${MAX_PREVIEW_QUBITS} qubits`}</Badge>
       </div>
 
-      {!preview ? (
+      {blockedReason ? (
+        <p role="status" className="mt-2 rounded-md border border-dashed border-danger-border bg-danger-bg px-3 py-2 text-[11px] leading-4 text-danger-text">
+          Preview unavailable: {blockedReason}
+        </p>
+      ) : !preview ? (
         <p className="mt-2 rounded-md border border-dashed border-lab-border px-3 py-2 text-[11px] leading-4 text-lab-faint">
           The in-browser preview computes 2ⁿ amplitudes and stops above {MAX_PREVIEW_QUBITS} qubits — the same exponential wall that
           limits every exact simulator. Use Simulator Lab for engine-routed analysis.

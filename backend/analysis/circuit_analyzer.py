@@ -86,6 +86,16 @@ def analyze_circuit(
             theta = float(op.params.get("theta", 0.0))
             if not _rotation_is_clifford(theta):
                 non_clifford_reasons.append(f"{gate}({theta:.4f}) is a non-Clifford angle")
+        if gate == "unitary":
+            # A matrix-defined custom gate is never classified as Clifford
+            # here -- doing so would need symbolic Clifford-group membership
+            # testing on an arbitrary matrix, which this structural analyzer
+            # deliberately does not attempt (out of scope; see
+            # docs/CUSTOM_GATES.md). Decomposition/composite custom gates
+            # never reach this point as "unitary" -- the frontend resolver
+            # flattens them into the built-in gates above first, so a Bell
+            # or GHZ macro is still correctly recognized as Clifford here.
+            non_clifford_reasons.append("custom matrix-defined (unitary) gate")
 
     contains_non_clifford = bool(non_clifford_reasons)
     is_clifford = not contains_non_clifford

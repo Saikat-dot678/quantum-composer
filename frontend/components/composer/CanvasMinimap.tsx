@@ -5,14 +5,19 @@
 // drag anywhere on the minimap to jump the main canvas there — the primary
 // large-circuit navigation aid, since a 128-qubit x 256-moment grid cannot be
 // seen in full at a legible zoom level.
-import { useCallback, useRef } from "react";
+import { memo, useCallback, useRef } from "react";
 import { CELL, GUTTER, qubitCenterY } from "@/lib/canvasGeometry";
 import type { CircuitOperation } from "@/lib/types";
 
 const MAP_WIDTH = 168;
 const MAP_HEIGHT = 108;
 
-export function CanvasMinimap({
+// Memoized: on a large circuit this redraws one rect per operation, and its
+// parent (CircuitCanvas) re-renders on every pointer-driven viewport tick.
+// Skipping this component's own re-render when none of its props actually
+// changed matters once `operations` reaches into the thousands. Requires
+// `onPanTo` to be a stable callback — see CircuitCanvas's own useCallback.
+function CanvasMinimapImpl({
   operations,
   numQubits,
   columns,
@@ -91,3 +96,5 @@ export function CanvasMinimap({
     </div>
   );
 }
+
+export const CanvasMinimap = memo(CanvasMinimapImpl);

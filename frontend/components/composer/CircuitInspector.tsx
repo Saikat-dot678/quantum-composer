@@ -4,16 +4,20 @@
 // register-settings by default, and fills in with exactly the selected gate's
 // editable fields the moment something is selected on the canvas. Replaces
 // the old permanently-visible CircuitSettings + SelectedGateDetails split.
-import { Copy, Trash2 } from "lucide-react";
-import { Badge, Button, NumberInput, SelectField } from "@/components/ui/primitives";
+import { ArrowLeftRight, Copy, Layers, Move, Pencil, Trash2 } from "lucide-react";
+import { Badge, Button, NumberInput, SelectField, StatusNotice } from "@/components/ui/primitives";
 import { gridRenderState } from "@/lib/circuitSizing";
 import type { SimulationPath } from "@/lib/circuitRouting";
 import { LIMITS, SHOT_OPTIONS } from "@/lib/constants";
+import { isExpandable, type CustomDefinition } from "@/lib/customGates";
 import type { CircuitAnalysis } from "@/lib/labTypes";
-import { ROTATION_GATES, type CircuitOperation } from "@/lib/types";
+import { ROTATION_GATES, TWO_QUBIT_GATES, type BuiltinGateName, type CircuitOperation, type GateName } from "@/lib/types";
 import { GATE_DEFINITIONS } from "./GateDock";
 import { StatePreviewPanel } from "./StatePreviewPanel";
 import type { CircuitData } from "@/lib/types";
+
+const SINGLE_QUBIT_FAMILY: GateName[] = ["x", "y", "z", "h", "s", "t"];
+const ROTATION_FAMILY: GateName[] = ["rx", "ry", "rz"];
 
 function NumberStepper({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
   const id = `inspector-${label.toLowerCase().replace(/\s+/g, "-")}`;
@@ -43,6 +47,14 @@ export function CircuitInspector({
   onThetaChange,
   onDeleteSelected,
   onDuplicateSelected,
+  onMoveSelected,
+  onCopySelected,
+  onReplaceGate,
+  onSwapEndpoints,
+  customDefinition,
+  customLibrary,
+  onEditCustomDefinition,
+  onExpandCustom,
 }: {
   circuit: CircuitData;
   columns: number;
@@ -57,10 +69,31 @@ export function CircuitInspector({
   onThetaChange: (value: number) => void;
   onDeleteSelected: () => void;
   onDuplicateSelected: () => void;
+  /** Enters keyboard move mode on the canvas (arrow keys slide a preview, Enter confirms). */
+  onMoveSelected: () => void;
+  onCopySelected: () => void;
+  /** Swaps the selected operation for another gate of the same qubit arity (e.g. X -> H, or CX -> CZ). */
+  onReplaceGate: (gate: GateName) => void;
+  /** 2-qubit gates only: swaps which qubit is control vs. target. */
+  onSwapEndpoints: () => void;
+  /** Resolved library definition when selectedOperation.gate === "custom" (null if its customId no longer exists). */
+  customDefinition?: CustomDefinition | null;
+  /** Full custom gate library, needed to resolve the whole circuit (not just the selection) for the state preview below. */
+  customLibrary?: ReadonlyMap<string, CustomDefinition>;
+  /** Opens the creation wizard pre-loaded with the selected instance's definition. */
+  onEditCustomDefinition?: () => void;
+  /** Opens a read-only expanded-circuit preview for a decomposition/composite instance. */
+  onExpandCustom?: () => void;
 }) {
   if (selectedOperation) {
-    const definition = GATE_DEFINITIONS[selectedOperation.gate];
-    const isRotation = ROTATION_GATES.includes(selectedOperation.gate);
+    // "unitary" never actually reaches the UI (it only exists in resolver
+    // output, see lib/customGateResolve.ts) — handled defensively alongside
+    // "custom" purely so this indexing stays type-safe.
+    const definition = selectedOperation.gate === "custom" || selectedOperation.gate === "unitary"
+      ? { label: customDefinition?.label ?? "?", name: customDefinition?.name ?? "Custom gate", description: customDefinition?.description ?? "This instance's definition is no longer in the library — it can be deleted, but not simulated or expanded." }
+      : GATE_DEFINITIONS[selectedOperation.gate];
+    const isCustom = selectedOperation.gate === "custom";
+    const isRotation = !isCustom && ROTATION_GATES.includes(selectedOperation.gate);
     const theta = typeof selectedOperation.params.theta === "number" ? selectedOperation.params.theta : 0;
     return (
       <div className="flex h-full flex-col overflow-y-auto rounded-xl2 border border-line bg-surface p-4 shadow-floating">
@@ -91,15 +124,63 @@ export function CircuitInspector({
             />
           </div>
         )}
-        <div className="mt-4 flex gap-2 border-t border-line-hairline pt-4">
-          <Button variant="secondary" size="sm" onClick={onDuplicateSelected} className="flex-1">
-            <Copy className="h-3.5 w-3.5" aria-hidden="true" /> Duplicate
+        <div className="mt-4 grid grid-cols-2 gap-2 border-t border-line-hairline pt-4">
+          <Button variant="secondary" size="sm" onClick={onMoveSelected}>
+            <Move className="h-3.5 w-3.5" aria-hidden="true" /> Move
           </Button>
-          <Button variant="danger" size="sm" onClick={onDeleteSelected} className="flex-1">
+          <Button variant="secondary" size="sm" onClick={onCopySelected}>
+            <Copy className="h-3.5 w-3.5" aria-hidden="true" /> Copy
+          </Button>
+          <Button variant="secondary" size="sm" onClick={onDuplicateSelected}>
+            Duplicate
+          </Button>
+          <Button variant="danger" size="sm" onClick={onDeleteSelected}>
             <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
           </Button>
         </div>
-        <p className="mt-3 text-[11px] leading-4 text-ink-500">Delete/Backspace and Ctrl/Cmd+D also work directly on the canvas.</p>
+
+        {isCustom && (
+          customDefinition ? (
+            <div className="mt-2 flex gap-2">
+              <Button variant="secondary" size="sm" className="flex-1" onClick={onEditCustomDefinition}>
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit definition
+              </Button>
+              {isExpandable(customDefinition) && (
+                <Button variant="secondary" size="sm" className="flex-1" onClick={onExpandCustom}>
+                  <Layers className="h-3.5 w-3.5" aria-hidden="true" /> Expand preview
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="mt-2">
+              <StatusNotice kind="error">The definition for this instance no longer exists in the library. It can be moved or deleted, but not simulated, generated, or expanded.</StatusNotice>
+            </div>
+          )
+        )}
+
+        {TWO_QUBIT_GATES.includes(selectedOperation.gate) && selectedOperation.gate !== "swap" && (
+          <Button variant="secondary" size="sm" onClick={onSwapEndpoints} className="mt-2 w-full">
+            <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" /> Swap control / target
+          </Button>
+        )}
+
+        {(SINGLE_QUBIT_FAMILY.includes(selectedOperation.gate) || ROTATION_FAMILY.includes(selectedOperation.gate) || TWO_QUBIT_GATES.includes(selectedOperation.gate)) && (
+          <div className="mt-3 border-t border-line-hairline pt-3">
+            <p className="eyebrow">Replace with</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {(SINGLE_QUBIT_FAMILY.includes(selectedOperation.gate) ? SINGLE_QUBIT_FAMILY : ROTATION_FAMILY.includes(selectedOperation.gate) ? ROTATION_FAMILY : TWO_QUBIT_GATES)
+                .filter((gate): gate is BuiltinGateName => gate !== "custom" && gate !== selectedOperation.gate)
+                .map((gate) => (
+                  <Button key={gate} variant="secondary" size="sm" onClick={() => onReplaceGate(gate)} className="!min-h-8 !px-2.5 font-mono">
+                    {GATE_DEFINITIONS[gate].label}
+                  </Button>
+                ))}
+            </div>
+            <p className="mt-1.5 text-[10px] leading-4 text-ink-500">Keeps the same qubit(s), time step, and — where meaningful — angle.</p>
+          </div>
+        )}
+
+        <p className="mt-3 text-[11px] leading-4 text-ink-500">Delete/Backspace, Ctrl/Cmd+D, Ctrl/Cmd+C, and M (move) also work directly on the canvas.</p>
       </div>
     );
   }
@@ -152,7 +233,7 @@ export function CircuitInspector({
         </div>
       )}
 
-      <StatePreviewPanel circuit={circuit} />
+      <StatePreviewPanel circuit={circuit} customLibrary={customLibrary} />
     </div>
   );
 }

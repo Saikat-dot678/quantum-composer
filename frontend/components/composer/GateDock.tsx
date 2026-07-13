@@ -6,18 +6,20 @@
 // accessible, keyboard-and-touch-safe baseline; dragging never becomes the
 // only way to place a gate.
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
-import type { GateName, Preset } from "@/lib/types";
+import { Library, Plus, Search } from "lucide-react";
+import type { CustomDefinition } from "@/lib/customGates";
+import type { BuiltinGateName, GateName, Preset } from "@/lib/types";
+import { CustomGateGlyph } from "./CustomGateGlyph";
 
 export interface GateDefinition {
-  id: GateName;
+  id: BuiltinGateName;
   label: string;
   name: string;
   description: string;
   category: "Single-qubit" | "Rotations" | "Two-qubit" | "Utility";
 }
 
-export const GATE_DEFINITIONS: Record<GateName, GateDefinition> = {
+export const GATE_DEFINITIONS: Record<BuiltinGateName, GateDefinition> = {
   x: { id: "x", label: "X", name: "Pauli X", description: "Flips |0〉 and |1〉, analogous to a classical NOT operation.", category: "Single-qubit" },
   y: { id: "y", label: "Y", name: "Pauli Y", description: "Combines a bit flip with a phase rotation around the Y axis.", category: "Single-qubit" },
   z: { id: "z", label: "Z", name: "Pauli Z", description: "Applies a phase flip to the |1〉 component.", category: "Single-qubit" },
@@ -41,11 +43,22 @@ export function GateDock({
   onSelect,
   presets,
   onLoadPreset,
+  customDefinitions,
+  selectedCustomId,
+  onSelectCustom,
+  onOpenLibrary,
+  onCreateCustom,
 }: {
   selected: GateName;
   onSelect: (gate: GateName) => void;
   presets: Preset[];
   onLoadPreset: (preset: Preset) => void;
+  /** Saved custom gates/operations, most-recently-updated first (see lib/customGateRepository.ts). */
+  customDefinitions: CustomDefinition[];
+  selectedCustomId: string | null;
+  onSelectCustom: (id: string) => void;
+  onOpenLibrary: () => void;
+  onCreateCustom: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"gates" | "presets">("gates");
@@ -56,6 +69,12 @@ export function GateDock({
     if (!needle) return defs;
     return defs.filter((gate) => gate.label.toLowerCase().includes(needle) || gate.name.toLowerCase().includes(needle) || gate.id.includes(needle));
   }, [query]);
+
+  const filteredCustom = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return customDefinitions;
+    return customDefinitions.filter((def) => def.label.toLowerCase().includes(needle) || def.name.toLowerCase().includes(needle));
+  }, [query, customDefinitions]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl2 border border-line bg-surface shadow-floating">
@@ -122,7 +141,58 @@ export function GateDock({
                 </div>
               );
             })}
-            {filtered.length === 0 && <p className="px-1 py-6 text-center text-xs text-ink-500">No gates match “{query}”.</p>}
+
+            <div className="mb-1">
+              <div className="mb-1.5 flex items-center justify-between px-1">
+                <p className="eyebrow">Custom</p>
+                <div className="flex items-center gap-1">
+                  <button type="button" onClick={onCreateCustom} aria-label="Create a new custom gate or operation" title="Create a new custom gate or operation" className="rounded-md p-1 text-ink-500 hover:bg-surface-sunken hover:text-ink-900">
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                  <button type="button" onClick={onOpenLibrary} aria-label="Open the custom gate library" title="Open the custom gate library" className="rounded-md p-1 text-ink-500 hover:bg-surface-sunken hover:text-ink-900">
+                    <Library className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              {filteredCustom.length === 0 ? (
+                <button type="button" onClick={onCreateCustom} className="w-full rounded-lg border border-dashed border-line-hairline px-2.5 py-2.5 text-left text-[11px] leading-4 text-ink-500 hover:border-accent-300 hover:text-ink-900">
+                  {customDefinitions.length === 0 ? "No custom gates yet — create one from a matrix, a gate sequence, or a canvas selection." : `No custom gates match “${query}”.`}
+                </button>
+              ) : (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {filteredCustom.map((def) => {
+                    const active = selected === "custom" && selectedCustomId === def.id;
+                    return (
+                      <button
+                        key={def.id}
+                        type="button"
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData("application/x-quantum-gate", "custom");
+                          event.dataTransfer.setData("application/x-quantum-custom-id", def.id);
+                          event.dataTransfer.effectAllowed = "copy";
+                          onSelectCustom(def.id);
+                        }}
+                        onClick={() => onSelectCustom(def.id)}
+                        aria-pressed={active}
+                        aria-label={`${def.name}. ${def.description || `Custom ${def.kind} operation.`}`}
+                        title={def.description || def.name}
+                        className={`flex min-h-10 cursor-grab flex-col items-center justify-center gap-0.5 rounded-lg border px-1 py-1.5 font-mono text-[10px] font-semibold transition-colors active:cursor-grabbing ${
+                          active ? "border-accent-500 bg-accent-50 text-accent-700 shadow-sm" : "border-line-hairline bg-surface-sunken text-ink-700 hover:border-accent-300 hover:text-ink-900"
+                        }`}
+                      >
+                        <CustomGateGlyph icon={def.icon} size={14} />
+                        <span className="max-w-full truncate">{def.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {filtered.length === 0 && filteredCustom.length === 0 && query && (
+              <p className="px-1 py-6 text-center text-xs text-ink-500">No gates match “{query}”.</p>
+            )}
           </div>
         </>
       ) : (

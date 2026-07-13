@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint app components lib e2e --ext .ts,.tsx --max-warnings 0",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "@types/node": "^22.13.0",
@@ -28,6 +29,7 @@
     "eslint-config-next": "^15.2.4",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^4.1.10"
   }
 }

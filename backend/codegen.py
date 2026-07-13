@@ -8,31 +8,50 @@ def _number(value: float | int) -> str:
     return repr(float(value))
 
 
-def generate_qiskit_code(request: CircuitRequest) -> str:
-    lines = [
-        "from qiskit import QuantumCircuit",
-        "from qiskit_aer import AerSimulator",
-        "",
-        f"circuit = QuantumCircuit({request.num_qubits}, {request.num_clbits})",
-    ]
+def _matrix_literal(matrix: list[list[list[float]]]) -> str:
+    """Readable Python literal for a unitary's matrix, e.g. [[complex(1.0, 0.0), ...], ...]."""
+    rows = (
+        "[" + ", ".join(f"complex({_number(re)}, {_number(im)})" for re, im in row) + "]"
+        for row in matrix
+    )
+    return "[" + ", ".join(rows) + "]"
 
+
+def generate_qiskit_code(request: CircuitRequest) -> str:
+    body: list[str] = []
     has_measurement = False
+    has_unitary = False
     for _, operation in ordered_operations(request):
         gate = operation.gate
         q = operation.qubits
         if gate in {"x", "y", "z", "h", "s", "t"}:
-            lines.append(f"circuit.{gate}({q[0]})")
+            body.append(f"circuit.{gate}({q[0]})")
         elif gate in {"rx", "ry", "rz"}:
-            lines.append(
+            body.append(
                 f"circuit.{gate}({_number(operation.params['theta'])}, {q[0]})"
             )
         elif gate in {"cx", "cz", "swap"}:
-            lines.append(f"circuit.{gate}({q[0]}, {q[1]})")
+            body.append(f"circuit.{gate}({q[0]}, {q[1]})")
         elif gate == "measure":
             has_measurement = True
-            lines.append(f"circuit.measure({q[0]}, {operation.clbits[0]})")
+            body.append(f"circuit.measure({q[0]}, {operation.clbits[0]})")
         elif gate == "barrier":
-            lines.append(f"circuit.barrier({', '.join(map(str, q))})")
+            body.append(f"circuit.barrier({', '.join(map(str, q))})")
+        elif gate == "unitary":
+            has_unitary = True
+            label = operation.label or "U"
+            body.append(
+                f"circuit.append(UnitaryGate({_matrix_literal(operation.matrix)}, "
+                f"label={label!r}), {list(q)})  # custom matrix-defined gate"
+            )
+
+    lines = ["from qiskit import QuantumCircuit"]
+    if has_unitary:
+        lines.append("from qiskit.circuit.library import UnitaryGate")
+    lines.append("from qiskit_aer import AerSimulator")
+    lines.append("")
+    lines.append(f"circuit = QuantumCircuit({request.num_qubits}, {request.num_clbits})")
+    lines.extend(body)
 
     lines.extend(["", "simulator = AerSimulator()"])
     if has_measurement:

@@ -5,8 +5,19 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ComposerMode } from "@/components/composer/ComposerMode";
 import { useToast } from "@/components/workspace/ToastProvider";
 import { useWorkspace } from "@/components/workspace/WorkspaceProvider";
-import { decodeCircuitParam, decodeCompressedCircuitParam } from "@/lib/circuitShare";
-import type { CircuitData } from "@/lib/types";
+import { decodeCircuitParamDetailed, decodeCompressedCircuitParamDetailed } from "@/lib/circuitShare";
+import { localCustomGateRepository } from "@/lib/customGateRepository";
+import type { CircuitData, CircuitOperation } from "@/lib/types";
+
+function remapCustomIds(circuit: CircuitData, idMap: Record<string, string>): CircuitData {
+  return {
+    ...circuit,
+    operations: circuit.operations.map((operation: CircuitOperation) =>
+      operation.gate === "custom" && operation.customId && idMap[operation.customId]
+        ? { ...operation, customId: idMap[operation.customId] }
+        : operation),
+  };
+}
 
 function ComposerRoute() {
   const router = useRouter();
@@ -24,12 +35,24 @@ function ComposerRoute() {
     if (!compressed && !legacy) return;
     consumedShare.current = true;
     void (async () => {
-      const decoded = compressed ? await decodeCompressedCircuitParam(compressed) : legacy ? decodeCircuitParam(legacy) : null;
-      if (decoded) {
-        workspace.loadCircuit(decoded);
+      const decoded = compressed ? await decodeCompressedCircuitParamDetailed(compressed) : legacy ? decodeCircuitParamDetailed(legacy) : null;
+      if (decoded?.ok && decoded.circuit) {
+        let circuit = decoded.circuit;
+        const definitions = decoded.definitions ?? [];
+        if (definitions.length > 0) {
+          const imported = localCustomGateRepository.importMany(JSON.stringify({ version: 1, definitions }));
+          if (imported.ok && imported.value) {
+            circuit = remapCustomIds(circuit, imported.value.idMap);
+          } else {
+            pushToast(`This shared circuit's custom gates could not be imported (${imported.reason ?? "unknown error"}); it was ignored.`, "error");
+            router.replace("/composer");
+            return;
+          }
+        }
+        workspace.loadCircuit(circuit);
         workspace.detachProject();
       } else {
-        pushToast("That shared link is invalid or contains an unsupported circuit; it was ignored.", "error");
+        pushToast(decoded?.reason ? `That shared link is invalid or contains an unsupported circuit — ${decoded.reason}` : "That shared link is invalid or contains an unsupported circuit; it was ignored.", "error");
       }
       router.replace("/composer");
     })();

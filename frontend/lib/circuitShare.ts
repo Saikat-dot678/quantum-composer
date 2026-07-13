@@ -1,3 +1,11 @@
+import {
+  MAX_CUSTOM_DEFINITIONS,
+  MAX_DECOMPOSITION_QUBITS,
+  definitionNumClbits,
+  definitionNumQubits,
+  type CustomDefinition,
+} from "./customGates";
+import { normalizeCustomDefinition, validateDefinition } from "./customGateValidation";
 import { LIMITS } from "./constants";
 import type { CircuitData, CircuitOperation, GateName } from "./types";
 
@@ -7,6 +15,7 @@ const SINGLE_QUBIT = new Set<GateName>(["x", "y", "z", "h", "s", "t"]);
 const ROTATIONS = new Set<GateName>(["rx", "ry", "rz"]);
 const TWO_QUBIT = new Set<GateName>(["cx", "cz", "swap"]);
 const GATE_TO_INDEX = new Map<GateName, number>(GATES.map((gate, index) => [gate, index]));
+const MAX_CUSTOM_ID_LENGTH = 128;
 
 export const MAX_SHARE_OPERATIONS = 400;
 export const MAX_SHARE_URL_LENGTH = 7_000;
@@ -22,6 +31,8 @@ export interface ShareResult {
 export interface ShareDecodeResult {
   ok: boolean;
   circuit?: CircuitData;
+  /** Custom gate/operation definitions embedded in the payload that `circuit`'s "custom" operations reference — empty unless the shared circuit actually used any. Callers must import these (e.g. into lib/customGateRepository.ts) before the circuit's customId references will resolve. */
+  definitions?: CustomDefinition[];
   reason?: string;
 }
 
@@ -84,8 +95,10 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
 }
 
 function normalizeOperation(value: unknown, maxMoment: number): CircuitOperation | null {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["gate", "qubits", "clbits", "params", "moment"])) return null;
-  if (typeof value.gate !== "string" || !GATE_SET.has(value.gate)) return null;
+  const isCustom = isPlainObject(value) && value.gate === "custom";
+  const allowedKeys = isCustom ? ["gate", "qubits", "clbits", "params", "moment", "customId"] : ["gate", "qubits", "clbits", "params", "moment"];
+  if (!isPlainObject(value) || !hasOnlyKeys(value, allowedKeys)) return null;
+  if (typeof value.gate !== "string" || (!GATE_SET.has(value.gate) && value.gate !== "custom")) return null;
   const gate = value.gate as GateName;
   if (!Array.isArray(value.qubits) || !value.qubits.every((q) => Number.isInteger(q) && (q as number) >= 0)) return null;
   if (!Array.isArray(value.clbits) || !value.clbits.every((c) => Number.isInteger(c) && (c as number) >= 0)) return null;
@@ -97,6 +110,18 @@ function normalizeOperation(value: unknown, maxMoment: number): CircuitOperation
   const clbits = value.clbits as number[];
   const paramKeys = Object.keys(value.params);
   let params: Record<string, number> = {};
+
+  if (isCustom) {
+    if (typeof value.customId !== "string" || !value.customId || value.customId.length > MAX_CUSTOM_ID_LENGTH) return null;
+    if (qubits.length < 1 || qubits.length > MAX_DECOMPOSITION_QUBITS) return null;
+    for (const key of paramKeys) {
+      const raw = value.params[key];
+      if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+      params[key] = raw;
+    }
+    return { gate, qubits: [...qubits], clbits: [...clbits], params, moment: value.moment as number, customId: value.customId };
+  }
+
   if (SINGLE_QUBIT.has(gate)) {
     if (qubits.length !== 1 || clbits.length !== 0 || paramKeys.length !== 0) return null;
   } else if (ROTATIONS.has(gate)) {
@@ -148,6 +173,57 @@ export function validateCircuitData(parsed: unknown, options: CircuitValidationO
   };
 }
 
+export interface BundleValidation {
+  ok: boolean;
+  definitions?: CustomDefinition[];
+  reason?: string;
+}
+
+/**
+ * Cross-checks a set of untrusted custom gate definitions against a
+ * (already-`validateCircuitData`-validated) circuit: every definition must
+ * itself be well-formed and internally valid (unitarity, decomposition
+ * cycles/depth/expansion — the exact same rules as saving one locally), and
+ * every "custom" operation in `circuit` must resolve to a definition in the
+ * bundle with a matching qubit/clbit count. Used by the share-link and
+ * circuit-import paths so a shared/exported circuit is self-contained rather
+ * than depending on the recipient already having the right definitions.
+ */
+export function validateCircuitBundle(circuit: CircuitData, rawDefinitions: unknown): BundleValidation {
+  if (rawDefinitions === undefined) return { ok: true, definitions: [] };
+  if (!Array.isArray(rawDefinitions)) return { ok: false, reason: "The bundled custom gate definitions are malformed." };
+  if (rawDefinitions.length > MAX_CUSTOM_DEFINITIONS) return { ok: false, reason: `A shared or exported circuit can carry at most ${MAX_CUSTOM_DEFINITIONS} custom gate definitions.` };
+
+  const normalized: CustomDefinition[] = [];
+  for (const raw of rawDefinitions) {
+    const definition = normalizeCustomDefinition(raw);
+    if (!definition) return { ok: false, reason: "One of the bundled custom gate definitions is malformed." };
+    normalized.push(definition);
+  }
+  if (new Set(normalized.map((definition) => definition.id)).size !== normalized.length) {
+    return { ok: false, reason: "The bundled custom gate definitions contain duplicate ids." };
+  }
+
+  const library = new Map(normalized.map((definition) => [definition.id, definition]));
+  for (const definition of normalized) {
+    const check = validateDefinition(definition, library);
+    if (!check.ok) return { ok: false, reason: `Custom gate "${definition.name}" failed validation: ${check.reason}` };
+  }
+
+  for (const operation of circuit.operations) {
+    if (operation.gate !== "custom") continue;
+    const definition = operation.customId ? library.get(operation.customId) : undefined;
+    if (!definition) {
+      return { ok: false, reason: `The circuit references a custom gate that was not included in the bundle (id "${operation.customId ?? "unknown"}").` };
+    }
+    if (operation.qubits.length !== definitionNumQubits(definition) || operation.clbits.length !== definitionNumClbits(definition)) {
+      return { ok: false, reason: `"${definition.name}" expects ${definitionNumQubits(definition)} qubit(s) and ${definitionNumClbits(definition)} classical bit(s), but a placed instance does not match.` };
+    }
+  }
+
+  return { ok: true, definitions: normalized };
+}
+
 function compactCircuit(circuit: CircuitData): CompactCircuit {
   return {
     v: 2,
@@ -178,6 +254,71 @@ function expandCompact(value: unknown): unknown {
     operations.push({ gate, moment, qubits, clbits, params } as CircuitOperation);
   }
   return { num_qubits: value.q, num_clbits: value.c, shots: value.s, operations };
+}
+
+// Compact v3: used only when a circuit actually contains "custom" operations
+// (auto-selected by encodeCircuitLinkCompressed) — a plain object-shaped
+// encoding rather than v2's numeric tuples, since custom operations carry a
+// variable customId/params shape that doesn't fit the fixed gate-index
+// scheme. Custom-free circuits keep encoding as v2 exactly as before, so
+// existing links and exports are untouched (true backward compatibility).
+interface CompactOperationV3 {
+  g: string;
+  m: number;
+  qb: number[];
+  cb: number[];
+  p: Record<string, number>;
+  cid?: string;
+}
+interface CompactCircuitV3 {
+  v: 3;
+  nq: number;
+  nc: number;
+  s: number;
+  o: CompactOperationV3[];
+  d: CustomDefinition[];
+}
+
+function compactCircuitV3(circuit: CircuitData, definitions: CustomDefinition[]): CompactCircuitV3 {
+  return {
+    v: 3,
+    nq: circuit.num_qubits,
+    nc: circuit.num_clbits,
+    s: circuit.shots,
+    o: circuit.operations.map((operation) => ({
+      g: operation.gate,
+      m: operation.moment,
+      qb: operation.qubits,
+      cb: operation.clbits,
+      p: operation.params,
+      ...(operation.gate === "custom" && operation.customId ? { cid: operation.customId } : {}),
+    })),
+    d: definitions,
+  };
+}
+
+/** Structural-only reshape into the plain-object CircuitData shape validateCircuitData expects — semantic validation (including the bundle cross-check) happens after this in the caller. */
+function expandCompactV3(value: Record<string, unknown>): { circuit: unknown; definitions: unknown } | null {
+  if (!Number.isInteger(value.nq) || !Number.isInteger(value.nc) || !Number.isInteger(value.s) || !Array.isArray(value.o) || !Array.isArray(value.d)) {
+    return null;
+  }
+  const operations: unknown[] = [];
+  for (const raw of value.o) {
+    if (!isPlainObject(raw) || typeof raw.g !== "string" || !Number.isInteger(raw.m) || !Array.isArray(raw.qb)) return null;
+    const operation: Record<string, unknown> = {
+      gate: raw.g,
+      moment: raw.m,
+      qubits: raw.qb,
+      clbits: Array.isArray(raw.cb) ? raw.cb : [],
+      params: isPlainObject(raw.p) ? raw.p : {},
+    };
+    if (raw.g === "custom" && typeof raw.cid === "string") operation.customId = raw.cid;
+    operations.push(operation);
+  }
+  return {
+    circuit: { num_qubits: value.nq, num_clbits: value.nc, shots: value.s, operations },
+    definitions: value.d,
+  };
 }
 
 function validateForShare(circuit: CircuitData): ShareDecodeResult {
@@ -256,13 +397,31 @@ async function decompressWithLimit(bytes: Uint8Array, limit: number): Promise<Ui
   return result;
 }
 
-/** Versioned compact tuple encoding compressed with deflate-raw. */
-export async function encodeCircuitLinkCompressed(circuit: CircuitData, origin: string): Promise<ShareResult> {
+/**
+ * Versioned compact encoding compressed with deflate-raw. Custom-free
+ * circuits always encode as v2 (numeric tuples, unchanged from before custom
+ * gates existed); a circuit that places any "custom" operation automatically
+ * switches to v3, which embeds the definitions it needs so the link is
+ * self-contained. `definitions` should be every definition the circuit's
+ * custom operations reference, directly or transitively — see
+ * lib/customGateResolve.ts's collectReferencedDefinitions. Passing an
+ * incomplete bundle fails the encode with a clear reason rather than
+ * producing a link that won't resolve for the recipient.
+ */
+export async function encodeCircuitLinkCompressed(circuit: CircuitData, origin: string, definitions: CustomDefinition[] = []): Promise<ShareResult> {
   const validated = validateForShare(circuit);
   if (!validated.ok || !validated.circuit) return { ok: false, reason: validated.reason };
-  if (!supportsCompression()) return encodeCircuitLink(validated.circuit, origin);
+  const usesCustom = validated.circuit.operations.some((operation) => operation.gate === "custom");
+  if (usesCustom) {
+    const bundle = validateCircuitBundle(validated.circuit, definitions);
+    if (!bundle.ok) return { ok: false, reason: bundle.reason };
+  }
+  if (!supportsCompression()) return usesCustom
+    ? { ok: false, reason: "This browser cannot create a share link for circuits with custom gates (compression is unavailable). Export JSON instead." }
+    : encodeCircuitLink(validated.circuit, origin);
   try {
-    const source = new TextEncoder().encode(JSON.stringify(compactCircuit(validated.circuit)));
+    const payloadObject = usesCustom ? compactCircuitV3(validated.circuit, definitions) : compactCircuit(validated.circuit);
+    const source = new TextEncoder().encode(JSON.stringify(payloadObject));
     const payload = bytesToBase64Url(await compress(source));
     const url = `${origin}/composer?c2=${payload}`;
     return url.length <= MAX_SHARE_URL_LENGTH
@@ -282,9 +441,21 @@ export async function decodeCompressedCircuitParamDetailed(payload: string): Pro
   try {
     const inflated = await decompressWithLimit(bytes, MAX_INFLATED_BYTES);
     const json = new TextDecoder("utf-8", { fatal: true }).decode(inflated);
-    const circuit = validateCircuitData(expandCompact(JSON.parse(json)));
+    const parsed = JSON.parse(json) as unknown;
+
+    if (isPlainObject(parsed) && parsed.v === 3) {
+      const expanded = expandCompactV3(parsed);
+      if (!expanded) return { ok: false, reason: "The shared circuit failed strict gate and register validation." };
+      const circuit = validateCircuitData(expanded.circuit);
+      if (!circuit) return { ok: false, reason: "The shared circuit failed strict gate and register validation." };
+      const bundle = validateCircuitBundle(circuit, expanded.definitions);
+      if (!bundle.ok) return { ok: false, reason: bundle.reason };
+      return { ok: true, circuit, definitions: bundle.definitions };
+    }
+
+    const circuit = validateCircuitData(expandCompact(parsed));
     return circuit
-      ? { ok: true, circuit }
+      ? { ok: true, circuit, definitions: [] }
       : { ok: false, reason: "The shared circuit failed strict gate and register validation." };
   } catch (error) {
     const tooLarge = error instanceof Error && error.message.includes("exceeded limit");

@@ -1,12 +1,27 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { validateCircuitData } from "@/lib/circuitShare";
+import { validateCircuitBundle, validateCircuitData } from "@/lib/circuitShare";
+import { localCustomGateRepository } from "@/lib/customGateRepository";
+import { collectReferencedDefinitions } from "@/lib/customGateResolve";
 import { listProjects, MAX_PROJECT_OPERATIONS, type Project } from "@/lib/projects";
+import type { CircuitData } from "@/lib/types";
 import { Button } from "@/components/ui/primitives";
 import { useToast } from "./ToastProvider";
 import { useWorkspace } from "./WorkspaceProvider";
 import { ModalPortal, useModalLifecycle } from "./Modal";
+
+const CIRCUIT_BUNDLE_FORMAT = "quantum-composer-circuit";
+
+function remapCustomIds(circuit: CircuitData, idMap: Record<string, string>): CircuitData {
+  return {
+    ...circuit,
+    operations: circuit.operations.map((operation) =>
+      operation.gate === "custom" && operation.customId && idMap[operation.customId]
+        ? { ...operation, customId: idMap[operation.customId] }
+        : operation),
+  };
+}
 
 function formatWhen(timestamp: number): string {
   const delta = Math.max(0, Date.now() - timestamp);
@@ -76,14 +91,24 @@ export function ProjectsDrawer({ open, onClose }: { open: boolean; onClose: () =
   }
 
   function exportCircuit() {
-    const blob = new Blob([JSON.stringify(workspace.circuit, null, 2)], { type: "application/json" });
+    // A circuit with no custom gates exports as the exact same plain
+    // CircuitData shape as before (backward compatible); one that places any
+    // custom gate switches to a self-contained bundle embedding every
+    // definition it (transitively) needs, so re-importing it elsewhere
+    // doesn't depend on the sender's local custom-gate library.
+    const library = new Map(localCustomGateRepository.list().map((definition) => [definition.id, definition]));
+    const definitions = collectReferencedDefinitions(workspace.circuit, library);
+    const payload = definitions.length > 0
+      ? { format: CIRCUIT_BUNDLE_FORMAT, version: 1, circuit: workspace.circuit, definitions }
+      : workspace.circuit;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = `${(workspace.activeProjectName ?? "quantum-circuit").replace(/[^\w-]+/g, "_")}.json`;
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    pushToast("Circuit exported as validated JSON.", "success");
+    pushToast(`Circuit exported as validated JSON${definitions.length > 0 ? ` with ${definitions.length} custom gate definition${definitions.length === 1 ? "" : "s"}` : ""}.`, "success");
   }
 
   async function importCircuit(file: File) {
@@ -92,14 +117,35 @@ export function ProjectsDrawer({ open, onClose }: { open: boolean; onClose: () =
       return;
     }
     try {
-      const circuit = validateCircuitData(JSON.parse(await file.text()), { maxOperations: MAX_PROJECT_OPERATIONS });
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const isBundle = typeof parsed === "object" && parsed !== null && (parsed as { format?: unknown }).format === CIRCUIT_BUNDLE_FORMAT;
+      const rawCircuit = isBundle ? (parsed as { circuit?: unknown }).circuit : parsed;
+      const circuit = validateCircuitData(rawCircuit, { maxOperations: MAX_PROJECT_OPERATIONS });
       if (!circuit) {
         notifyFailure("That file failed strict gate, register, timeline, or operation-limit validation.");
         return;
       }
+
+      let finalCircuit = circuit;
+      if (isBundle) {
+        const bundle = validateCircuitBundle(circuit, (parsed as { definitions?: unknown }).definitions);
+        if (!bundle.ok) {
+          notifyFailure(bundle.reason);
+          return;
+        }
+        if (bundle.definitions && bundle.definitions.length > 0) {
+          const imported = localCustomGateRepository.importMany(JSON.stringify({ version: 1, definitions: bundle.definitions }));
+          if (!imported.ok || !imported.value) {
+            notifyFailure(imported.reason ?? "The circuit's custom gate definitions could not be imported.");
+            return;
+          }
+          finalCircuit = remapCustomIds(circuit, imported.value.idMap);
+        }
+      }
+
       workspace.detachProject();
-      workspace.loadCircuit(circuit);
-      pushToast(`Imported ${file.name}: ${circuit.num_qubits} qubits and ${circuit.operations.length} operations.`, "success");
+      workspace.loadCircuit(finalCircuit);
+      pushToast(`Imported ${file.name}: ${finalCircuit.num_qubits} qubits and ${finalCircuit.operations.length} operations.`, "success");
       onClose();
     } catch {
       notifyFailure("That file is not valid JSON.");

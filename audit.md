@@ -1445,3 +1445,327 @@ All commands actually run, from `frontend/` unless noted:
 - `e2e/backend.spec.ts` requires a locally running FastAPI backend and is not
   part of the default CI-safe suite; it was run and verified passing in this
   session but is not wired into any CI workflow.
+
+# Circuit Editor and Custom Operation Upgrade (2026-07-13)
+
+## Scope
+
+Building on the completed Instrument Canvas redesign (above) without another
+visual pass: (1) drag-to-reposition and a keyboard-equivalent move mode for
+placed gates, generalized to atomic multi-qubit movement; (2) a single
+shared coordinate/placement-validation system behind every placement
+interaction; (3) contextual gate actions (move/copy/duplicate/delete/replace/
+swap-endpoints) wired into the Inspector and the command palette; (4) a full
+custom gate/operation system — matrix-defined gates, decomposition-defined
+gates with named parameters, and composite "macro" operations captured from
+the live circuit — with a creation wizard, a management library, safe
+declarative persistence, canvas rendering and placement, backend resolution
+(including one new backend-known `"unitary"` gate for matrix definitions),
+Qiskit/OpenQASM generation, and Clifford/engine-compatibility classification;
+(5) self-contained sharing/export/import for circuits that use custom gates.
+
+Full design and behavior are documented in
+[docs/CIRCUIT_EDITOR_INTERACTIONS.md](docs/CIRCUIT_EDITOR_INTERACTIONS.md)
+and [docs/CUSTOM_GATES.md](docs/CUSTOM_GATES.md); this section covers what
+was found, decided, and verified while building it.
+
+## Design decisions
+
+- **Custom gates never reach the backend as "custom."** A resolver
+  (`frontend/lib/customGateResolve.ts`) flattens every placed custom
+  instance into plain built-in operations (decomposition/composite) or one
+  new `"unitary"` operation (matrix), called before every backend request
+  and the local state preview. This meant the backend's Pydantic schema,
+  Clifford analyzer, and code generator needed almost no new surface area —
+  confirmed in practice: the analyzer needed exactly one new line (classify
+  `"unitary"` as non-Clifford), the code generator needed one new gate case,
+  and both stabilizer engines already rejected non-Clifford circuits
+  generically, so they correctly reject a `"unitary"`-bearing circuit with
+  **zero** engine-specific changes.
+- **One placement validator, reused, not reimplemented per interaction.**
+  `frontend/lib/placement.ts` (built in an earlier session for gate movement)
+  turned out to already be fully qubit-count-agnostic — extending it to
+  custom-gate placement required no changes to the module itself, only a new
+  call site. Multi-qubit ghost/snap-guide rendering in `CircuitCanvas.tsx`
+  needed generalizing from a hardcoded "exactly 2 qubits" check to "2 or
+  more," since a custom operation can span any qubit count.
+  Built-in-gate click-placement's own pre-existing "overwrite on conflict"
+  behavior was deliberately left as-is rather than migrated to the shared
+  validator, to avoid changing long-standing tested behavior beyond what was
+  asked — see docs/CIRCUIT_EDITOR_INTERACTIONS.md's "Known limitations".
+- **Composite operations capture a live-circuit region, not a freeform
+  canvas selection.** The existing canvas selection model is single-cell
+  only; building true multi-select/marquee selection was judged out of
+  proportion to the time available. A qubit-range × time-range picker inside
+  the creation wizard, with a live preview list of exactly which placed
+  operations match, is a smaller, fully-functional substitute for "select
+  existing placed operations, save as reusable macro" — disclosed as a
+  scope simplification, not silently substituted.
+- **Expand/collapse is a read-only preview dialog**, not a persistent
+  spatial reflow of the canvas grid — reusing the same resolver a real
+  backend call would use, so the preview can never drift from actual
+  behavior, while the collapsed block stays the single source of truth for
+  the operation's logical identity (satisfies the "without losing its
+  logical identity" requirement without a much larger canvas-layout
+  feature).
+- **Custom-gate persistence deliberately mirrors `lib/projects.ts`'s
+  shape** (versioned envelope, corrupt-store recovery via a session notice +
+  localStorage backup, a narrow repository interface) so a future cloud-sync
+  adapter could implement the same interface without touching call sites —
+  consistent with the existing project system rather than a new pattern.
+- **Sharing/export only bundles what a circuit actually needs**, collected
+  transitively through nested `custom:<id>` references
+  (`collectReferencedDefinitions`), not the user's whole library — keeps
+  share links and exports proportionate to the circuit, not the library
+  size.
+
+## Faults found and fixed
+
+- **A composite template silently used the wrong steps.** The creation
+  wizard's `applyTemplate()` populated a `steps` state variable for a
+  composite template (e.g. "Bell pair"), but the composite candidate
+  computation unconditionally derived its steps from the live qubit/moment
+  region picker instead, completely ignoring the template's own steps —
+  clicking "Bell pair" would silently build whatever the (usually empty)
+  default picker range happened to match on the live circuit, not a Bell
+  pair. Found by tracing the exact data flow while writing a Playwright test
+  for the template flow, before the test was even run. Fixed by adding a
+  `lockedComposite` state that a template (or editing an existing composite)
+  populates directly, bypassing the live picker entirely until the user
+  explicitly asks to "use a live selection instead."
+- **Two real interaction bugs already fixed in the drag/keyboard-move system
+  earlier in this session** (documented in detail in
+  docs/CIRCUIT_EDITOR_INTERACTIONS.md): the invalid-drop status banner was
+  originally keyboard-only (a pointer drag onto an occupied cell showed only
+  a color-only red outline, a WCAG 1.4.1 concern), and the keyboard-move
+  banner didn't appear until the first arrow-key press. Both caught by
+  writing and running real Playwright tests against the built app, not by
+  code review alone — consistent with this project's established practice.
+- **`Distributive Omit` over a discriminated union.** The wizard's template
+  type (`DefinitionTemplate = Omit<CustomDefinition, "id" | "createdAt" |
+  "updatedAt" | "favorite">`) initially collapsed `CustomDefinition`'s three
+  variants down to only their shared fields — `Omit` over a union computes
+  `keyof` as an *intersection* of each member's keys, silently discarding
+  `matrix`/`steps`/`parameters`. Fixed with a small distributive-conditional
+  type alias (`T extends unknown ? Omit<T, K> : never`) that maps over each
+  union member first.
+- **`qasm2.dumps()` and `UnitaryGate` — verified, not assumed.** Rather than
+  writing a QASM-limitation fallback preemptively, ran a direct empirical
+  test: Qiskit's `qasm2.dumps()` correctly synthesizes an inline `gate
+  unitary q0 { ... }` OPENQASM 2 definition for 1-, 2-, and 3-qubit
+  `UnitaryGate` instructions via its own unitary-synthesis passes. No
+  fallback was needed; the existing `RuntimeError → HTTP 501` path in
+  `/circuit/qasm` remains as the honest catch-all for any case synthesis
+  genuinely can't handle.
+- **A raw "custom" circuit could have reached the backend from Simulator
+  Lab.** `ComposerMode.tsx`'s "Open in Simulator Lab" originally handed off
+  the raw (unresolved) circuit; Simulator Lab has no custom-gate concept and
+  would have sent a `{gate: "custom", ...}` operation straight to
+  `/circuit/analyze`/`/circuit/simulate-v2`, which the backend schema would
+  reject (safe, but a confusing user-facing failure with no local
+  explanation). Investigated by tracing every place a `CircuitData` crosses
+  a component boundary rather than assuming resolution only mattered for
+  Composer's own Run/Analyze/Generate buttons. Fixed by handing Simulator
+  Lab the already-resolved circuit — also more honest, since Simulator Lab
+  can't render a custom-gate block anyway.
+
+## Custom gate schema and validation
+
+Types: `frontend/lib/customGates.ts` (declarative schema, safety-limit
+constants, zero logic beyond type guards). Validation:
+`frontend/lib/customGateValidation.ts` (matrix unitarity, decomposition step
+shape/parameter/cycle/depth/expansion checks — pure functions, never throw,
+always return `{ok, reason?}`). Never `eval`, `Function()`, or execute
+anything; see docs/CUSTOM_GATES.md's Safety summary for the complete list.
+
+## Persistence, migrations, import/export, share behavior
+
+`frontend/lib/customGateRepository.ts` (versioned envelope, corrupt-recovery,
+idempotent re-import via content-equality on id collision, `idMap` returned
+from `importMany` for reference remapping). `frontend/lib/circuitShare.ts`
+extended: `normalizeOperation` accepts a structurally-valid `"custom"`
+operation; a new `validateCircuitBundle` cross-checks a set of embedded
+definitions against a circuit's actual references (existence, arity match,
+internal validity, no duplicate ids); a new v3 compact share-link format
+embeds definitions and is only used when a circuit actually contains a
+custom gate (a custom-gate-free circuit still encodes as the pre-existing v2
+tuple format, byte-for-byte unchanged — verified by a dedicated backward-
+compatibility unit test and by the pre-existing `smoke.spec.ts` share-link
+tests still passing unmodified). `ProjectsDrawer.tsx`'s circuit JSON
+export/import and `app/composer/page.tsx`'s share-link loader both detect
+and handle the bundle format, importing embedded definitions and remapping
+`customId` references through the returned `idMap`.
+
+## Qiskit and OpenQASM behavior
+
+Covered in detail in docs/CUSTOM_GATES.md. Summary: decomposition/composite
+gates need no backend codegen changes (they arrive already flattened);
+matrix gates produce a real Qiskit `UnitaryGate` with a readable label,
+generate matching Python source, and export to OpenQASM 2 correctly
+(verified empirically for 1-3 qubit matrices, including a random 3-qubit
+unitary, not just the identity/Pauli cases).
+
+## Analyzer and engine compatibility
+
+Covered in detail in docs/CUSTOM_GATES.md. Summary: one new line in
+`backend/analysis/circuit_analyzer.py` (`"unitary"` always non-Clifford);
+zero changes to `engines/stim_stabilizer.py` or `engines/aer_stabilizer.py`
+(both already rejected any circuit the analyzer marked non-Clifford, with a
+clear message); verified with a direct Python reproduction that a flattened
+Bell-pair macro (H then CX, no custom-gate awareness needed) still correctly
+classifies as Clifford, and that a `"unitary"`-bearing circuit is correctly
+excluded from `recommended_engines` for both stabilizer engines and
+correctly routed to `aer_statevector`/`aer_mps` by the auto router.
+
+## Security and validation
+
+Never `eval`, `Function()`, or execution of imported source, on either side.
+The backend independently re-validates and re-limits every `"unitary"`
+operation (`backend/schemas.py`: matrix shape, finiteness, unitarity within
+the same `1e-6` tolerance as the frontend, qubit count capped at 3) rather
+than trusting that the frontend's own check already ran — verified directly
+with a battery of Pydantic-level rejection tests (non-unitary matrix, wrong
+dimensions, too many qubits, non-finite entries, a matrix field on a
+non-unitary gate, classical bits or params on a unitary gate).
+
+## Undo/redo integration
+
+Placing, moving, duplicating, replacing, deleting, and editing parameters of
+a custom instance all go through `WorkspaceProvider`'s existing
+commit-per-`setCircuit`-call semantics (no new history code needed — the
+same mechanism already used by every other circuit mutation). Expand/collapse
+never touches circuit state (it is a read-only preview dialog), so it has no
+undo/redo entry, which is the correct behavior since it changes no persistent
+state. Library-level definition deletion does not attempt to touch or
+"fix" circuits that reference the deleted id — a placed instance whose
+`customId` no longer resolves becomes the graceful "missing definition"
+state described above (movable/deletable, not simulatable) rather than being
+silently rewritten or the deletion being blocked; this was a deliberate
+choice among the four options the standing instructions offered (cancel
+deletion / embed-expand referenced instances / remove instances /
+duplicate-before-changing) — "leave it recoverable" was judged the least
+surprising default, since the other three would each either block a
+legitimate deletion or silently rewrite a circuit the user didn't touch.
+
+## Files created
+
+Frontend: `lib/placement.test.ts` (from the movement work, retained),
+`lib/customGates.ts`, `lib/customGateValidation.ts`,
+`lib/customGateValidation.test.ts`, `lib/customGateRepository.ts`,
+`lib/customGateResolve.ts`, `lib/customGateResolve.test.ts`,
+`lib/customGateCodePreview.ts`, `lib/customGateTemplates.ts`,
+`lib/circuitShare.test.ts`, `components/composer/CustomGateGlyph.tsx`,
+`components/composer/CustomGateWizard.tsx`,
+`components/composer/CustomGateLibraryDrawer.tsx`,
+`components/composer/CustomGateExpandPreview.tsx`, `e2e/custom-gates.spec.ts`
+(promoted alongside the pre-existing `e2e/movement.spec.ts`),
+`vitest.config.ts`. Backend: `tests/test_unitary_gate.py`. Docs:
+`docs/CUSTOM_GATES.md`, `docs/CIRCUIT_EDITOR_INTERACTIONS.md`.
+
+## Files modified
+
+Frontend: `lib/types.ts` (`BuiltinGateName`/widened `GateName`, `customId`/
+`matrix`/`label` on `CircuitOperation`), `lib/circuitShare.ts` (custom-gate
+structural validation, `validateCircuitBundle`, v3 compact format),
+`lib/statevector.ts` (accepts a resolved circuit, general N-qubit matrix
+application for `"unitary"`), `lib/feasibility.ts` (unchanged — confirmed
+already-safe default, documented), `components/composer/CircuitCanvas.tsx`
+(custom-gate rendering: placed glyph, moving-ghost, missing-definition
+state, generalized multi-qubit connector/ghost rendering, `customLibrary`/
+`selectedCustomId` props, drag-from-dock `customId` payload),
+`components/composer/GateDock.tsx` (Custom section: search, chip grid,
+create/library buttons, drag-from-dock), `components/composer/
+CircuitInspector.tsx` (custom-instance definition display, Edit/Expand
+buttons, missing-definition notice), `components/composer/
+StatePreviewPanel.tsx` (resolves before previewing, honest blocked-state
+message), `components/composer/ComposerMode.tsx` (library state, custom
+placement, resolver wiring into generate/run/analyze/Simulator-Lab handoff,
+share-link definition bundling, new command palette actions),
+`components/workspace/ProjectsDrawer.tsx` (bundle-aware export/import),
+`app/composer/page.tsx` (bundle-aware share-link loading). Backend:
+`schemas.py` (`"unitary"` gate, `matrix`/`label` fields, matrix/unitarity
+validation), `circuit_builder.py` (`UnitaryGate` construction),
+`codegen.py` (`UnitaryGate` code generation), `analysis/circuit_analyzer.py`
+(non-Clifford classification).
+
+## Tests added
+
+- Unit (Vitest, `frontend/lib/*.test.ts`): 21 placement (pre-existing, kept
+  green), 43 custom-gate validation, 15 resolver (matrix expansion,
+  decomposition/composite expansion with parameter binding, recursive
+  `custom:<id>` expansion, error paths, scheduling collision-freedom,
+  referenced-definition collection), 16 circuit-share (custom-operation
+  structural validation, bundle cross-validation, v2 backward compatibility,
+  v3 round-trip, tampered-payload rejection) — **95 total, all passing.**
+- Playwright (`frontend/e2e/custom-gates.spec.ts`, new): create a matrix
+  gate from a template and place/select it; reject a non-unitary matrix
+  live in the wizard with Save disabled; create a Bell-pair composite from a
+  template and place both operations atomically; reject (not silently
+  overwrite) a custom-gate placement whose span conflicts with an existing
+  operation; expand-preview shows the exact flattened sequence; the library
+  drawer lists/favorites/deletes; a share link carrying a custom gate
+  round-trips through a simulated fresh session (cleared local custom-gate
+  library); exporting and re-importing circuit JSON restores a placed custom
+  gate. **8 tests, all passing**, run alongside the full pre-existing
+  `movement.spec.ts`/`smoke.spec.ts`/`a11y.spec.ts`/`visual.spec.ts`/
+  `backend.spec.ts` suite with zero regressions (47/47 total).
+- pytest (`backend/tests/test_unitary_gate.py`, new): schema
+  acceptance/rejection (unitary/non-unitary/wrong-dimension/too-many-qubits/
+  non-finite/matrix-on-wrong-gate/classical-bits/params), `circuit_builder`
+  construction and matrix fidelity (via `qiskit.quantum_info.Operator`),
+  codegen (import inclusion, generated code actually executes via `exec`,
+  import omitted when unused), QASM export for 1- and 2-qubit matrices,
+  analyzer classification (unitary always non-Clifford; a flattened Bell
+  macro stays Clifford), and full API round trips (validate/qiskit-code/
+  qasm/simulate/analyze/simulate-v2, including explicit-engine stabilizer
+  rejection for both Aer and, since the optional dependency happens to be
+  installed in this environment, real Stim). **29 tests, all passing**
+  alongside the full pre-existing 47-test suite (76/76 total).
+
+## Results
+
+All commands actually run:
+
+- `cd frontend && npm install` — up to date, 419 packages, 0 vulnerabilities
+  requiring action (2 pre-existing moderate advisories, unrelated to this
+  pass, left untouched).
+- `npm run typecheck` — clean, exit 0.
+- `npm run lint` (`--max-warnings 0`) — clean, exit 0.
+- `npm run build` — clean, exit 0; 7 pages.
+- `npm run test:unit` (Vitest) — **95/95 passed.**
+- `npm run test:e2e` (Playwright, chromium, backend running) — **47/47
+  passed** (9 backend-dependent, 9 a11y, 8 custom-gates, 6 movement, 17
+  smoke, 6 visual).
+- `cd backend && python -m pytest -q` — **76/76 passed** (47 pre-existing +
+  29 new).
+
+## Remaining limitations
+
+- Built-in gate click-placement/drag-from-dock keeps its pre-existing
+  overwrite-on-conflict behavior rather than the shared validator's
+  reject-on-conflict behavior — disclosed above and in
+  docs/CIRCUIT_EDITOR_INTERACTIONS.md, not fixed in this pass.
+- Composite "from selection" uses a qubit-range × time-range picker, not
+  freeform canvas multi-select.
+- Expand/collapse is a read-only preview dialog, not a persistent spatial
+  reflow of the canvas.
+- Legacy uncompressed (`?c=`) share links do not bundle custom gate
+  definitions (the compressed `?c2=` path does, and is what the in-app Share
+  button always produces).
+- No systematic large-circuit interactive-performance profiling was
+  performed for the movement/placement system in this pass — see
+  docs/CIRCUIT_EDITOR_INTERACTIONS.md's Performance section for what was and
+  was not done, and why the deferred items were judged safe to defer.
+- Matrix-defined custom gates are never auto-classified as Clifford, even
+  when their matrix happens to equal one.
+- Custom gates have no dedicated Playwright screenshot/visual-regression
+  coverage (the general `visual.spec.ts` baselines were regenerated and
+  pass, but no new custom-gate-specific visual snapshots were added) and no
+  dedicated mobile-viewport custom-gate workflow test was written (mobile
+  Composer coverage in `smoke.spec.ts` predates this pass and was
+  reconfirmed passing, but does not exercise the wizard/library drawer).
+- Simulator Lab (the separate generated/large-circuit mode) has no
+  custom-gate authoring or rendering of its own by design; only the
+  hand-off from Composer was hardened.
+- No changes are committed — everything in this section is present in the
+  working tree, pending review.

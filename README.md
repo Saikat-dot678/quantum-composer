@@ -21,6 +21,30 @@ honest about the hard limits of classical simulation.
   inspector that stays empty until a placed gate is selected. Viewport-based
   virtualization (only the visible cells are iterated per render) is what
   makes a 128-qubit × 256-moment circuit navigable at all.
+- **Reposition placed gates** by dragging (with a live ghost preview, snap
+  guides, and valid/invalid drop feedback) or, as a fully keyboard-equivalent
+  path, by selecting a gate and pressing `M` to enter move mode (arrow keys
+  slide a preview, `Enter` confirms, `Escape` cancels). Multi-qubit gates
+  (built-in or custom) move as one atomic unit — control/target and operand
+  order are always preserved — and every move is a single undo/redo step.
+  One shared coordinate/placement-validation module
+  (`frontend/lib/placement.ts`) backs click placement, dragging, keyboard
+  movement, and custom-gate placement alike, so they can never disagree about
+  what is a legal drop.
+- **Custom gates and operations:** define a gate from a literal unitary
+  matrix (1–3 qubits, validated for unitarity within tolerance), from a
+  decomposition of existing gates (with named, reusable parameters), or
+  capture a region of the live circuit as a reusable composite "macro" —
+  all through a progressive-disclosure creation wizard with a live Qiskit
+  code preview. A dedicated library (search, qubit-count/kind filters,
+  favorites, recently used, JSON import/export) manages what you save.
+  Everything is declarative JSON validated client-side — nothing is ever
+  `eval`'d or executed. Placed custom instances are fully backend-aware:
+  decomposition/composite gates are transparently flattened into built-in
+  gates before any backend call (so a Bell-pair macro still analyzes as
+  Clifford), and matrix gates become a Qiskit `UnitaryGate`. Shared links and
+  exported/imported circuit JSON embed the custom definitions they reference,
+  so they round-trip to a browser that has never seen them before.
 - Circuit JSON, generated Qiskit code, OpenQASM 2, counts histogram, depth, gate
   counts, and text diagram, docked in a collapsible bottom sheet that
   auto-expands after a run. The V1 code/QASM/exact path remains limited to
@@ -29,10 +53,12 @@ honest about the hard limits of classical simulation.
 - **Live instruments:** the floating toolbar shows the active circuit's
   qubit/op count and route as you edit; for circuits up to 5 qubits the
   inspector renders a local ideal-state preview (basis probabilities, phases,
-  and a 1-qubit Bloch projection) — above that it explains the exponential
-  wall instead. The canvas has one tab stop; arrow keys move a keyboard
-  cursor and an aria-live region announces its cell, since a zoomable spatial
-  canvas can't expose one focusable DOM node per cell at scale.
+  and a 1-qubit Bloch projection), transparently resolving any custom gates
+  first — above the qubit cap, or when a custom gate can't be resolved, it
+  explains why instead of showing a silently wrong result. The canvas has one
+  tab stop; arrow keys move a keyboard cursor and an aria-live region
+  announces its cell, since a zoomable spatial canvas can't expose one
+  focusable DOM node per cell at scale.
 - Presets: superposition, Bell, GHZ, teleportation skeleton, Deutsch–Jozsa,
   Grover, BB84.
 
@@ -368,7 +394,7 @@ With the backend on `:8000` and the frontend on `:3000`:
 7. **Optional Stim** — `GET /engines` shows `stim_stabilizer` available only if
    `stim` is installed; the UI and router behave correctly either way.
 
-Backend contract equivalents run headless via `python -m pytest -q` (47 tests in
+Backend contract equivalents run headless via `python -m pytest -q` (76 tests in
 the current suite). CI runs backend tests plus frontend lint/typecheck/build
 checks; it does not automate the browser interactions listed above.
 
@@ -392,10 +418,15 @@ checks; it does not automate the browser interactions listed above.
 - Cryptography simulators are **protocol-level**. Runs are reproducible when the
   same explicit `seed` is supplied; the QRNG is educational, not a certified
   hardware generator.
-- No dynamic conditions, custom gates, or real hardware execution yet — see
-  the [roadmap](docs/BEAST_MODE_ROADMAP.md). The statevector/Bloch preview
-  that does exist is a local, ideal-state approximation for ≤5 qubits, not a
-  general viewer for arbitrary circuit sizes.
+- Custom gates exist (matrix, decomposition, and composite/macro
+  definitions — see [docs/CUSTOM_GATES.md](docs/CUSTOM_GATES.md)), but no
+  dynamic (mid-circuit classical-condition) gates or real hardware execution
+  yet — see the [roadmap](docs/BEAST_MODE_ROADMAP.md). The statevector/Bloch
+  preview that does exist is a local, ideal-state approximation for ≤5
+  qubits, not a general viewer for arbitrary circuit sizes. Custom gates are
+  never automatically classified as Clifford-compatible from a matrix alone —
+  only decomposition/composite gates that flatten entirely into Clifford
+  built-ins are recognized as such.
 - Estimator budgets and qubit caps reduce accidental resource use but do not
   replace process/container memory limits, concurrency control, or timeouts.
 
