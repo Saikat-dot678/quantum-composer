@@ -259,6 +259,10 @@ def _per_qubit_summary(rho1: np.ndarray, qubit: int) -> dict[str, Any]:
         "probability_0": _clamp_probability(float(np.real(rho1[0, 0]))),
         "probability_1": _clamp_probability(float(np.real(rho1[1, 1]))),
         "is_mixed": magnitude < 1.0 - 1e-6,
+        "reduced_density_matrix": [
+            [complex_to_json(complex(value)) for value in row]
+            for row in rho1
+        ],
     }
 
 
@@ -389,6 +393,8 @@ def statevector_analysis(
         "global_metrics": {
             "purity": global_purity,
             "is_pure": True,
+            "exact": not any("approximat" in warning.lower() or "truncat" in warning.lower() for warning in result_warnings),
+            "payload_truncated": amplitudes is None and detail in ("top_amplitudes", "full"),
             "amplitude_count": len(sv),
             "nonzero_amplitude_count": int(np.sum(probabilities > SPARSE_PROBABILITY_THRESHOLD)),
             "global_phase_note": (
@@ -585,9 +591,17 @@ def density_matrix_analysis(
         "global_metrics": {
             "purity": global_purity,
             "is_pure": global_purity > 1.0 - 1e-6,
+            "exact": True,
+            "payload_truncated": include_full_matrix and density_matrix_json is None,
             "trace": _clamp_tiny(trace.real),
             "hermiticity_error": hermiticity_error,
             "von_neumann_entropy_bits": _clamp_tiny(max(0.0, global_entropy)),
+            # Descending spectrum of the density matrix (clamped to [0, 1]).
+            # A pure state is one eigenvalue ~1 and the rest ~0; entropy above
+            # is computed from exactly this list. Capped to the 64 largest so
+            # a 15-qubit matrix (32768 eigenvalues) cannot bloat the payload;
+            # the tail beyond any physically meaningful rank is ~0 anyway.
+            "eigenvalues": [_clamp_tiny(float(v)) for v in sorted(eigenvalues, reverse=True)[:64]],
             "mixed_state_note": "This is a mixed-state density matrix, not a pure statevector -- purity below 1 reflects genuine noise/decoherence, not measurement error.",
         },
         "warnings": result_warnings,
@@ -648,6 +662,8 @@ def stabilizer_summary(
         "global_metrics": {
             "stabilizer_generators": list(generators),
             "generator_count": len(generators),
+            "exact": True,
+            "payload_truncated": False,
         },
         "warnings": [
             "This engine tracks a stabilizer representation, not a full amplitude vector. "

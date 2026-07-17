@@ -29,7 +29,7 @@ export interface LocalFeasibility {
   densityMatrixLog2Bytes: number;
   statevectorHuman: string;
   densityMatrixHuman: string;
-  /** Statevector risk against the default 1,024 MB reference budget. */
+  /** Statevector risk against the default 1,024 MiB reference budget. */
   risk: ResourceRisk;
   /** Headline matching the backend's feasibility vocabulary. */
   headline: "clifford_scalable" | "exact_feasible" | "exact_borderline" | "approximation_or_hardware";

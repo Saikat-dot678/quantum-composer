@@ -53,10 +53,10 @@ def test_analyze_bell_circuit_is_clifford():
         num_clbits=2,
         operations=_ops(
             [
-                {"gate": "h", "qubits": [0]},
-                {"gate": "cx", "qubits": [0, 1]},
-                {"gate": "measure", "qubits": [0], "clbits": [0]},
-                {"gate": "measure", "qubits": [1], "clbits": [1]},
+                    {"gate": "h", "qubits": [0], "moment": 0},
+                    {"gate": "cx", "qubits": [0, 1], "moment": 1},
+                    {"gate": "measure", "qubits": [0], "clbits": [0], "moment": 2},
+                    {"gate": "measure", "qubits": [1], "clbits": [1], "moment": 2},
             ]
         ),
     )
@@ -73,9 +73,9 @@ def test_analyze_non_clifford_circuit():
         num_clbits=0,
         operations=_ops(
             [
-                {"gate": "h", "qubits": [0]},
-                {"gate": "t", "qubits": [0]},
-                {"gate": "rx", "qubits": [1], "params": {"theta": math.pi / 3}},
+                    {"gate": "h", "qubits": [0], "moment": 0},
+                    {"gate": "t", "qubits": [0], "moment": 1},
+                    {"gate": "rx", "qubits": [1], "params": {"theta": math.pi / 3}, "moment": 2},
             ]
         ),
     )
@@ -89,7 +89,7 @@ def test_rotation_at_clifford_angle_stays_clifford():
     analysis = analyze_circuit(
         num_qubits=1,
         num_clbits=0,
-        operations=_ops([{"gate": "rz", "qubits": [0], "params": {"theta": math.pi / 2}}]),
+        operations=_ops([{"gate": "rz", "qubits": [0], "params": {"theta": math.pi / 2}, "moment": 0}]),
     )
     # rz(pi/2) is Clifford (equivalent to S up to phase).
     assert analysis["is_clifford"] is True

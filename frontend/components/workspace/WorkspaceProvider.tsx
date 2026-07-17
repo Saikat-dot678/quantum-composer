@@ -69,6 +69,8 @@ export interface WorkspaceValue {
   canRedo: boolean;
   labCircuit: CircuitData | null;
   setLabCircuit: (circuit: CircuitData | null) => void;
+  hardwareCircuit: CircuitData | null;
+  setHardwareCircuit: (circuit: CircuitData | null) => void;
   hydrated: boolean;
   activeProjectId: string | null;
   activeProjectName: string | null;
@@ -90,6 +92,7 @@ export function useWorkspace(): WorkspaceValue {
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [circuit, setCircuitState] = useState<CircuitData>(() => cloneCircuit(PRESETS[1].circuit));
   const [labCircuit, setLabCircuitState] = useState<CircuitData | null>(null);
+  const [hardwareCircuit, setHardwareCircuitState] = useState<CircuitData | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeProjectName, setActiveProjectName] = useState<string | null>(null);
@@ -119,6 +122,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     circuitRef.current = cloned;
     setCircuitState(cloned);
     setLabCircuitState(null);
+    setHardwareCircuitState(null);
     resetHistory();
   }, [resetHistory]);
 
@@ -131,6 +135,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     circuitRef.current = next;
     setCircuitState(next);
     setLabCircuitState(null);
+    setHardwareCircuitState(null);
     setSaveState("unsaved");
     setSaveError(null);
     setHistoryVersion((version) => version + 1);
@@ -152,6 +157,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     circuitRef.current = previous;
     setCircuitState(previous);
     setLabCircuitState(null);
+    setHardwareCircuitState(null);
     setSaveState("unsaved");
     setSaveError(null);
     setHistoryVersion((version) => version + 1);
@@ -164,6 +170,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     circuitRef.current = next;
     setCircuitState(next);
     setLabCircuitState(null);
+    setHardwareCircuitState(null);
     setSaveState("unsaved");
     setSaveError(null);
     setHistoryVersion((version) => version + 1);
@@ -340,6 +347,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setLabCircuitState(next ? cloneCircuit(next) : null);
   }, []);
 
+  const setHardwareCircuit = useCallback((next: CircuitData | null) => {
+    setHardwareCircuitState(next ? cloneCircuit(next) : null);
+  }, []);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
@@ -377,6 +388,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     canRedo: future.current.length > 0,
     labCircuit,
     setLabCircuit,
+    hardwareCircuit,
+    setHardwareCircuit,
     hydrated,
     activeProjectId,
     activeProjectName,
@@ -391,7 +404,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }), [
     circuit, setCircuit, loadCircuit, createProject, saveAsProject, saveActiveProject,
     openProject, renameProject, duplicateProject, deleteProject, detachProject, undo,
-    redo, labCircuit, setLabCircuit, hydrated, activeProjectId, activeProjectName,
+    redo, labCircuit, setLabCircuit, hardwareCircuit, setHardwareCircuit, hydrated, activeProjectId, activeProjectName,
     saveState, lastSavedAt, saveError, storageNotice, projectRevision, historyVersion,
   ]);
 

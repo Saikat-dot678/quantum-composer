@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateActio
 import { AnimatePresence, motion } from "framer-motion";
 import { LayoutGrid, SlidersHorizontal, X } from "lucide-react";
 import { circuitApi } from "@/lib/api";
+import { canonicalizeCircuit } from "@/lib/circuitOrdering";
 import { getSimulationPath } from "@/lib/circuitRouting";
 import { encodeCircuitLinkCompressed } from "@/lib/circuitShare";
 import { LIMITS } from "@/lib/constants";
@@ -41,6 +42,7 @@ interface Props {
   circuit: CircuitData;
   setCircuit: Dispatch<SetStateAction<CircuitData>>;
   onOpenSimulatorLab: (circuit: CircuitData) => void;
+  onOpenHardwareMapping: (circuit: CircuitData) => void;
 }
 
 const removeConflicts = (operations: CircuitOperation[], moment: number, qubits: number[]) =>
@@ -78,7 +80,7 @@ function MobileSheet({ onClose, title, children }: { onClose: () => void; title:
   );
 }
 
-export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab }: Props) {
+export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHardwareMapping }: Props) {
   const [columns, setColumns] = useState(8);
   const [selectedGate, setSelectedGate] = useState<GateName>("h");
   const [pending, setPending] = useState<CanvasCell | null>(null);
@@ -111,7 +113,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab }: Props)
   const customLibraryMap = useMemo(() => new Map(customDefinitions.map((definition) => [definition.id, definition])), [customDefinitions]);
 
   const sortedCircuit = useMemo(
-    () => ({ ...circuit, operations: [...circuit.operations].sort((left, right) => left.moment - right.moment) }),
+    () => canonicalizeCircuit(circuit),
     [circuit],
   );
   // Every backend call (validate/code/qasm/simulate/analyze) needs custom
@@ -479,6 +481,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab }: Props)
           depth: response.depth,
           gate_counts: response.gate_counts,
           diagram: response.diagram,
+          circuit_diagram: response.circuit_diagram,
           warnings: response.warnings,
           selectedEngine: response.selected_engine,
           engineReason: response.engine_reason,
@@ -501,7 +504,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab }: Props)
       setQasm(qasmResponse.status === "fulfilled" ? qasmResponse.value.qasm : `// OpenQASM export unavailable\n// ${errorMessage(qasmResponse.reason, "Unknown error")}`);
       if (simulationResponse.status === "rejected") throw simulationResponse.reason;
       const simulation = simulationResponse.value;
-      setResult({ counts: simulation.counts, depth: simulation.depth, gate_counts: simulation.gate_counts, diagram: simulation.diagram, warnings: simulation.warnings });
+      setResult({ counts: simulation.counts, depth: simulation.depth, gate_counts: simulation.gate_counts, diagram: simulation.diagram, circuit_diagram: simulation.circuit_diagram, warnings: simulation.warnings });
       pushToast(`Simulation complete · ${Object.values(simulation.counts).reduce((sum, count) => sum + count, 0).toLocaleString()} shots.`, "success");
       setRunCounter((value) => value + 1);
     } catch (error) {
@@ -550,6 +553,14 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab }: Props)
     }
     onOpenSimulatorLab(resolved.circuit);
   }
+
+  function openHardwareMapping() {
+    if (!resolved.ok || !resolved.circuit) {
+      pushToast(resolved.reason ?? "This circuit could not be resolved for Hardware Mapping.", "error");
+      return;
+    }
+    onOpenHardwareMapping(resolved.circuit);
+  }
   const working = busyAction !== null;
 
   function openCreateCustomGate() {
@@ -580,6 +591,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab }: Props)
     { id: "composer-run", group: "Composer", label: "Run current circuit", hint: simulationPath.id.toUpperCase(), disabled: working, run: () => void run() },
     { id: "composer-analyze", group: "Composer", label: "Analyze feasibility", hint: "backend analyzer", disabled: working, run: () => void analyze() },
     { id: "composer-generate", group: "Composer", label: "Generate Qiskit / QASM outputs", disabled: working, run: () => void generate() },
+    { id: "composer-hardware", group: "Composer", label: "Open in Hardware Mapping", hint: "logical → physical", run: openHardwareMapping },
     { id: "composer-move", group: "Composer", label: "Move selected gate", hint: "M, then arrow keys", disabled: !selectedOperation, run: moveSelected },
     { id: "composer-duplicate", group: "Composer", label: "Duplicate selected operation", hint: "Control D", disabled: !selectedOperation, run: duplicateSelected },
     { id: "composer-copy", group: "Composer", label: "Copy selected operation", hint: "Control C", disabled: !selectedOperation, run: copySelected },
@@ -677,6 +689,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab }: Props)
               onZoomOut={() => canvasHandle.current?.zoomOut()}
               onZoomFit={() => canvasHandle.current?.zoomToFit()}
               onOpenSimulatorLab={openSimulatorLab}
+              onOpenHardwareMapping={openHardwareMapping}
               onAnalyze={() => void analyze()}
               onClear={() => { setCircuit((current) => ({ ...current, operations: [] })); setPending(null); setSelectedCell(null); pushToast("Circuit operations cleared."); }}
               onGenerate={() => void generate()}

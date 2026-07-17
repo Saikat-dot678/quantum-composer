@@ -8,16 +8,17 @@
 import type { StateAnalysisResponse } from "@/lib/labTypes";
 import { Badge, Callout } from "../../ui/primitives";
 
-function PurityBars({ values }: { values: number[] }) {
+function PurityBars({ values, entropies }: { values: number[]; entropies: Array<number | null> }) {
   return (
     <div className="space-y-1.5">
       {values.map((purity, qubit) => (
-        <div key={qubit} className="grid grid-cols-[3rem_1fr_4rem] items-center gap-2 text-[11px]">
+        <div key={qubit} className="grid grid-cols-[3rem_1fr_4rem_minmax(4.5rem,auto)] items-center gap-2 text-[11px]">
           <span className="font-mono text-lab-muted">q{qubit}</span>
           <div className="h-2 overflow-hidden rounded-sm bg-lab-raised" role="meter" aria-label={`Reduced purity of qubit ${qubit}`} aria-valuemin={0} aria-valuemax={1} aria-valuenow={purity}>
             <div className="h-full rounded-sm bg-accent-cyan" style={{ width: `${purity * 100}%` }} />
           </div>
           <span className="text-right font-mono text-lab-muted">{purity.toFixed(4)}</span>
+          <span className="text-right font-mono text-lab-faint">{entropies[qubit] !== null ? `${entropies[qubit]!.toFixed(3)} bits` : ""}</span>
         </div>
       ))}
     </div>
@@ -49,9 +50,14 @@ export function EntanglementView({ state }: { state: StateAnalysisResponse }) {
 
       {entanglement.per_qubit_purity.length > 0 && (
         <div>
-          <p className="instrument-label">Per-qubit reduced purity</p>
-          <p className="mt-1 text-[10px] text-lab-faint">Below 1 indicates that qubit is entangled with the rest of the system (for a pure global state).</p>
-          <div className="mt-2"><PurityBars values={entanglement.per_qubit_purity} /></div>
+          <p className="instrument-label">Per-qubit reduced purity and entropy</p>
+          <p className="mt-1 text-[10px] text-lab-faint">Purity below 1 (equivalently, entropy above 0 bits) indicates that qubit is entangled with the rest of the system, for a pure global state.</p>
+          <div className="mt-2">
+            <PurityBars
+              values={entanglement.per_qubit_purity}
+              entropies={entanglement.per_qubit_purity.map((_, qubit) => state.per_qubit?.[qubit]?.von_neumann_entropy_bits ?? null)}
+            />
+          </div>
         </div>
       )}
 

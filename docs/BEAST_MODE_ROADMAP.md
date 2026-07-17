@@ -13,7 +13,8 @@ can honestly go next.
 - Strict Pydantic-validated circuit JSON — **no user Python is ever executed**.
 - Qiskit code generation and OpenQASM 2 export.
 - Local Qiskit Aer simulation with counts histogram, depth, gate counts, and a
-  text diagram.
+  headless Qiskit Matplotlib SVG circuit diagram. Legacy text fields remain
+  API-only for older callers.
 - Presets: superposition, Bell, GHZ, teleportation skeleton, Deutsch–Jozsa,
   Grover, BB84 encode/decode.
 
@@ -85,6 +86,29 @@ can honestly go next.
   and an explicit local-preview-vs-backend-result comparison action in
   Composer, both manual, never run automatically on edit.
 
+### Hardware Mapping and responsive hardening
+
+- `/hardware` maps a resolved Composer/imported circuit against generic,
+  version-discovered fake, validated manual, or authenticated account-scoped
+  IBM targets. OpenQASM 2 works in the base install; OpenQASM 3 and IBM Runtime
+  integrations are optional. Pasted Python is rejected and never executed.
+- The backend normalizes target/coupling/calibration metadata and uses Qiskit's
+  target-aware preset pass manager with explicit optimization, seed, layout,
+  and routing controls. The response contains initial/final layouts, active/
+  idle qubits, direct metrics, captured routing SWAPs, used edges, duration,
+  and a disclosed heuristic—not an invented fidelity.
+- The SVG topology supports calibration/activity/routing overlays, pan/zoom/
+  fit/search/export, accessible non-color cues, and synchronized qubit/edge/
+  SWAP selection. Up to six targets can be compared with a documented score;
+  queue never decides by itself.
+- Environment or saved Qiskit accounts are preferred. Optional session
+  credentials are backend-memory-only, clearable, HTTPS/origin/rate/timeout
+  protected, redacted, and absent from logs/responses/browser persistence.
+- The four workspaces and key dialogs/results have document-overflow regression
+  coverage for the required desktop, tablet, phone, landscape, and 80–200%
+  layout-zoom matrix. The Composer→Simulator and Composer→Hardware resolved
+  custom-gate handoffs are covered end to end.
+
 ## Future (not yet built)
 
 ### Execution & realism
@@ -92,12 +116,6 @@ can honestly go next.
 - **IBM backend execution** via a reviewed server-side Qiskit Runtime adapter
   (credentials stay server-side; explicit authorization, job polling, quotas).
 - **Real backend noise models** imported from device calibration data.
-- **Transpiler visualization** and **coupling-map visualization**.
-- A native fix for the Composer→Simulator-Lab custom-gate handoff race
-  discovered while integrating state analysis (see `audit.md`'s "Custom-gate
-  integration" section) — a circuit containing a custom gate, handed to
-  Simulator Lab via the toolbar button, can currently reach the backend
-  unresolved and be honestly rejected (422) rather than analyzed.
 - A NumPy-compatible `.npy`/`.npz` state export (JSON/CSV exist today).
 - Direct reduced-state extraction from MPS tensors, avoiding the full
   statevector conversion Aer's public API currently requires.

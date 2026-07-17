@@ -17,12 +17,12 @@ const Q_MAX = 32;
 const LOG2_MAX = 60; // 1 EiB ceiling; curves are clipped/faded above this.
 const UNIT_STEPS: Array<{ log2: number; label: string }> = [
   { log2: 0, label: "1 B" },
-  { log2: 10, label: "1 KB" },
-  { log2: 20, label: "1 MB" },
-  { log2: 30, label: "1 GB" },
-  { log2: 40, label: "1 TB" },
-  { log2: 50, label: "1 PB" },
-  { log2: 60, label: "1 EB" },
+  { log2: 10, label: "1 KiB" },
+  { log2: 20, label: "1 MiB" },
+  { log2: 30, label: "1 GiB" },
+  { log2: 40, label: "1 TiB" },
+  { log2: 50, label: "1 PiB" },
+  { log2: 60, label: "1 EiB" },
 ];
 
 const W = 720;
@@ -138,7 +138,7 @@ export function EngineScalingChart({
         {budgetLog2 <= LOG2_MAX && (
           <g>
             <line x1={MARGIN.left} y1={budgetY} x2={W - MARGIN.right} y2={budgetY} stroke="#3f3f46" strokeWidth={1} strokeDasharray="5 3" opacity={0.55} />
-            <text x={W - MARGIN.right} y={budgetY - 4} textAnchor="end" fontFamily="var(--font-mono)" fontSize={9} fontWeight={700} fill="#3f3f46">{formatInteger(maxMemoryMb)} MB budget</text>
+            <text x={W - MARGIN.right} y={budgetY - 4} textAnchor="end" fontFamily="var(--font-mono)" fontSize={9} fontWeight={700} fill="#3f3f46">{formatInteger(maxMemoryMb)} MiB budget</text>
           </g>
         )}
 

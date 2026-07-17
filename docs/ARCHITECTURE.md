@@ -7,16 +7,18 @@ analysis, and execution. The browser sends declarative JSON only. No API accepts
 or runs user-submitted Python.
 
 ```text
-Next.js application shell
-├─ Composer ───────────── CircuitData JSON ──┬─ V1 validate/code/QASM/simulate
+Next.js App Router shell + WorkspaceProvider
+├─ /composer  ─────────── CircuitData JSON ──┬─ V1 validate/code/QASM/simulate
 │                                            └─ V2 analyze/simulate-v2
-├─ Simulator Lab ───────── circuit + options ─── V2 analyzer/router
-└─ Cryptography Lab ───── protocol parameters ── protocol simulators
-                                                    │
-FastAPI + Pydantic validation                       │
-├─ fixed gate dispatch → QuantumCircuit → Aer/Stim ┘
-├─ resource estimator + engine router
-└─ BB84 / E91 / B92 / QRNG protocol models
+├─ /simulator ─────────── circuit + options ─── V2 analyzer/router
+├─ /crypto ────────────── protocol parameters ─ protocol simulators
+└─ /hardware ──────────── circuit + target ───── target discovery/transpilation
+                                                       │
+FastAPI + strict Pydantic validation                   │
+├─ fixed gate dispatch → QuantumCircuit → Aer/Stim ───┤
+├─ resource estimator + engine router                 │
+├─ BB84 / E91 / B92 / QRNG protocol models            │
+└─ hardware/ → Qiskit Target + preset pass manager ───┘
 ```
 
 For circuit execution, `moment` records a visual time-step column. Operations
@@ -24,24 +26,34 @@ are stable-sorted by `moment`, with list position breaking ties. The backend the
 dispatches a fixed gate allowlist into a `QuantumCircuit`; it never evaluates a
 gate or module name supplied by the client.
 
+`moment` is the canonical chronological key. Array insertion order is storage
+history, not execution order. Frontend import/share/project boundaries and API
+clients use `frontend/lib/circuitOrdering.ts`; backend builders, generators,
+analyzers, V1/V2 engines, diagram inputs, and hardware JSON imports use
+`backend/validators.py`. Both utilities sort numerically, do not mutate their
+inputs, and preserve input order only as the deterministic tie-breaker for legal
+parallel operations in the same moment.
+
 ## Frontend ownership and transport
 
-- `app/page.tsx` owns the active mode and the shared composer circuit. Mode-local
-  controls, loading state, notices, and results remain inside their feature.
+- App Router pages own four deep-linkable workspaces: `/composer`,
+  `/simulator`, `/crypto`, and `/hardware`. `WorkspaceProvider` owns the shared
+  circuit, undo/redo, active project, and explicit resolved circuit handoffs.
+  Each feature retains its own controls, loading state, notices, and results.
 - The V1 composer API module owns validation, Qiskit code, QASM, and small exact
   simulation calls. The V2/lab API module owns health and engine discovery,
   circuit analysis, engine-routed simulation, and the four cryptography
   protocols. Both use a shared JSON transport/error helper so offline and
   FastAPI error handling stay consistent.
-- The application shell and mode navigation frame the three feature areas.
+- The application shell and mode navigation frame the four feature areas.
   Composer components own the palette, settings, presets, grid, generated output,
   and measurement results. Simulator and cryptography components own their lab
   controls and analysis views. Reusable visual primitives live under
   `components/ui/`.
 
-This split is intentionally lightweight: there is no global state library. It
-also means the TypeScript response types must be kept synchronized with the
-Pydantic schemas and protocol dictionaries.
+This split is intentionally lightweight: React context supplies workspace state
+without a third-party global-state library. TypeScript response types remain
+explicitly synchronized with Pydantic response models and protocol dictionaries.
 
 ## Circuit schemas and visual limits
 
@@ -76,7 +88,10 @@ outside any V1 container limit can be analyzed or simulated through V2, but the
 current V1 code/QASM endpoints cannot export them.
 
 Both request types reuse the same operation model. Extra fields are rejected;
-indices must be unique, non-negative, and within the declared registers.
+indices must be unique, non-negative, and within the declared registers. Every
+operation requires `moment` as a strict integer in `0..1,000,000`; missing,
+string, fractional, negative, boolean, NaN, and infinite values are rejected,
+not coerced. A qubit or classical bit cannot be occupied twice in one moment.
 
 | Gate | Shape | Qiskit mapping |
 | --- | --- | --- |
@@ -91,9 +106,30 @@ indices must be unique, non-negative, and within the declared registers.
 If no measurement exists, V1 simulation copies the circuit, measures all
 qubits, and returns a warning. Reported depth and counts describe the submitted
 user circuit. The normalized response includes `counts`, `depth`,
-`gate_counts`, `diagram`, and `warnings`. `codegen.py` returns Qiskit Python as
+`gate_counts`, optional typed `circuit_diagram`, legacy `diagram`, and
+`warnings`. `codegen.py` returns Qiskit Python as
 text or serializes the validated circuit as OpenQASM; generated Python is never
 executed by the API.
+
+## Circuit visualization pipeline
+
+V1, V2, circuit import, and hardware transpilation share
+`visualization/circuit_renderer.py`. It draws the validated Qiskit circuit with
+the Matplotlib drawer, dynamically selects `fold`, serializes a tightly bounded
+SVG, and returns it as base64 in a typed response object. Matplotlib is forced
+to `Agg` before `pyplot` import, rendering is protected by a lock, every figure
+is closed, and identical circuit/options reuse a bounded 24-entry LRU cache.
+
+```text
+validated circuit -> Qiskit QuantumCircuit -> mpl drawer (Agg)
+                  -> bounded SVG -> base64 CircuitDiagramPayload
+                  -> shared React CircuitDiagram <img> viewer
+```
+
+The UI never injects raw SVG. Legacy text diagram fields remain for API
+compatibility but are not displayed. Oversized or failed renders add a warning
+without changing simulation, state-analysis, or mapping success. See
+[CIRCUIT_DIAGRAMS.md](CIRCUIT_DIAGRAMS.md) for folding thresholds and limits.
 
 ## V2 multi-engine simulation
 
@@ -122,9 +158,9 @@ Key modules:
 - Qiskit/Aer imports are lazy, so engine discovery still works when an optional
   runtime is absent.
 
-`POST /circuit/analyze` uses a fixed 1024 MB reference budget. The simulator
+`POST /circuit/analyze` uses a fixed 1,024 MiB reference budget. The simulator
 reanalyzes internally using `options.max_memory_mb`, which may be declared from
-16 to 65,536 MB. Consequently, analysis and execution can show different risk
+16 to 65,536 MiB. Consequently, analysis and execution can show different risk
 labels when the budgets differ.
 
 The exact-engine caps (30 statevector qubits and 15 density-matrix qubits) and
@@ -253,6 +289,65 @@ this browser" wherever it's shown, distinct from a real
 "Open in Simulator Lab" and "Compare with backend result" — but no change to
 what it itself computes.
 
+### State-analysis presentation contract
+
+Every meaningful `StateAnalysisResponse` field has a defined destination:
+
+| Contract data | Destination |
+| --- | --- |
+| engine, representation, exact/approximate, semantic point, qubits, timing, shots, normalization/trace state, availability/reason, warnings, truncation | Quantum State → Overview |
+| sparse Dirac terms, top states, amplitude real/imaginary/magnitude, theoretical probability, numeric phase, bit ordering | Overview plus virtualized Probabilities/Phases tables |
+| sampled counts and normalized frequencies | Probabilities, visibly separate from theoretical state probabilities |
+| marginal probability and each qubit's reduced density matrix, Bloch vector, Pauli expectations, purity, entropy | Probabilities and selectable Bloch view |
+| density matrix, trace/error, Hermiticity error, purity, entropy, eigenvalues | Density Matrix heatmaps/table/summary; oversized full matrices remain JSON-export-only |
+| concurrence, Schmidt coefficients/partition entropy, reduced purity/entropy | Entanglement, with the documented multipartite/mixed-state limitation |
+| stabilizer generators and MPS approximation metadata | Overview and diagnostics; no fabricated amplitudes |
+| full typed response | JSON export; amplitude rows additionally support CSV |
+
+Loading, not-requested, unavailable, partial/truncated, backend-offline,
+unsupported, timeout/run failure, and export failure states render explicit
+feedback rather than an empty panel.
+
+## Hardware Mapping
+
+`/hardware` is a fourth App Router workspace. It consumes an explicit resolved
+Composer handoff (kept until the Composer circuit changes), validated circuit
+JSON, OpenQASM 2, or optional OpenQASM 3. Pasted Python is rejected. The
+frontend's custom-gate resolver recursively flattens decomposition/composite
+definitions and converts matrix definitions to the backend's validated
+`unitary` operation before any mapping request.
+
+```text
+Circuit source ─┐
+                ├─► /hardware/target/describe ─► normalized BackendDetail
+Target source ──┘
+       │
+       ├─ generic/manual/fake ─► local Qiskit Target
+       └─ IBM account name ────► account-scoped QiskitRuntimeService backend.target
+
+{circuit,target,options}
+       └─► /hardware/transpile
+             └─ generate_preset_pass_manager(target=..., level=...)
+                   └─ layouts + routing SWAP capture + metrics + duration/error diagnostics
+```
+
+The `backend/hardware/` package separates availability checks, target builders,
+provider normalization, schemas, circuit import, transpilation, and routes.
+Generic and manual targets need only base Qiskit. Fake snapshots and IBM account
+discovery use optional `qiskit-ibm-runtime`; OpenQASM 3 uses optional
+`qiskit-qasm3-import`. One malformed or metadata-poor fake/real backend cannot
+take down the catalog.
+
+The topology uses target-supplied coordinates when present and labels generated
+positions **Schematic topology layout**. Logical/physical selection, used edges,
+and routing SWAP events share selection state across the SVG, layout table, and
+routing timeline. Comparison runs the same circuit/options against up to six
+targets and exposes its deterministic score and caveats; queue is informational
+and does not decide the recommendation.
+
+See [HARDWARE_MAPPING.md](HARDWARE_MAPPING.md) for schema, setup, overlays,
+security controls, formulas, and limitations.
+
 ## Cryptography simulation
 
 ```text
@@ -275,5 +370,11 @@ would reduce drift risk.
 - CORS allows the documented local frontend origins only.
 - A `422` generally represents validation, unsupported, or infeasible work; a
   `503` represents an unavailable execution dependency or engine.
-- No IBM token is requested, stored, or transmitted. `hardware.py` is a future
-  interface boundary only; real hardware execution is not implemented.
+- IBM credentials are backend-only. Environment variables and locally saved
+  Qiskit accounts are preferred. An optional temporary token is sent only in a
+  connect request body, kept in server memory, never returned/logged/persisted,
+  and can be disconnected. The session endpoint requires HTTPS outside
+  localhost, validates Origin, rate-limits attempts, times out provider calls,
+  and redacts provider errors.
+- Account discovery and mapping are implemented; real QPU job submission,
+  polling, cancellation, and result retrieval are intentionally absent.

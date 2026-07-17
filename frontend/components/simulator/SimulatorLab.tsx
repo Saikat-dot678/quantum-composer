@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HONESTY_NOTE, LIMITS } from "@/lib/constants";
+import { canonicalizeCircuit } from "@/lib/circuitOrdering";
 import { analyzeLocally } from "@/lib/feasibility";
 import { formatEngineName, formatInteger } from "@/lib/formatting";
 import { labApi } from "@/lib/labApi";
@@ -52,7 +53,7 @@ interface SimulatorLabProps {
 type MobilePane = "source" | "engines" | "results";
 
 function orderedCircuit(circuit: CircuitData): CircuitData {
-  return { ...circuit, operations: [...circuit.operations].sort((left, right) => left.moment - right.moment) };
+  return canonicalizeCircuit(circuit);
 }
 
 function presetById(id: string | null | undefined): LabPreset | null {
@@ -80,19 +81,23 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
 
   if (!bootRef.current) {
     const preset = presetById(initialSourceParam);
+    const isExplicitHandoff = !preset && initialCircuit !== undefined;
     const circuit = orderedCircuit(preset ? preset.build() : initialCircuit ?? composerCircuit);
     const requestedEngine = isEngineId(initialEngineParam) ? initialEngineParam : null;
     bootRef.current = {
       circuit,
       preset,
       engine: requestedEngine ?? preset?.suggestedEngine ?? "auto",
-      sourceId: preset?.id ?? "composer",
+      sourceId: preset?.id ?? (isExplicitHandoff ? "composer-handoff" : "composer"),
       sourceLabel: preset?.name ?? "Live Composer circuit",
-      sourceNote: preset?.teaches ?? "Following the current circuit in the shared visual workspace.",
+      sourceNote: preset?.teaches ?? (isExplicitHandoff
+        ? "Explicit resolved handoff from Composer; use Load live Composer circuit to resume synchronization."
+        : "Following the current circuit in the shared visual workspace."),
       expectsRejection: Boolean(preset?.expectRejection),
     };
   }
   const boot = bootRef.current;
+  const followLiveComposer = useRef(initialCircuit === undefined);
 
   const [circuit, setCircuit] = useState<CircuitData>(boot.circuit);
   const [sourceId, setSourceId] = useState(boot.sourceId);
@@ -125,6 +130,7 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
   const [runElapsedMs, setRunElapsedMs] = useState(0);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [mobilePane, setMobilePane] = useState<MobilePane>("engines");
+  const [dockExpanded, setDockExpanded] = useState(false);
   const [hoveredLaneId, setHoveredLaneId] = useState<string | null>(null);
   const [notice, setNotice] = useState<SimulatorNotice>({
     kind: "info",
@@ -275,6 +281,7 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
   }, [invalidateRun]);
 
   const loadComposerCircuit = useCallback(() => {
+    followLiveComposer.current = true;
     activateCircuit(composerCircuit, {
       id: "composer",
       label: "Live Composer circuit",
@@ -285,6 +292,7 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
   }, [activateCircuit, composerCircuit]);
 
   const loadPreset = useCallback((preset: LabPreset) => {
+    followLiveComposer.current = false;
     activateCircuit(preset.build(), {
       id: preset.id,
       label: preset.name,
@@ -303,7 +311,7 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
   }, [circuit, requestAnalysis]);
 
   useEffect(() => {
-    if (sourceId !== "composer" || composerCircuit === lastComposerCircuit.current || runLoading) return;
+    if (!followLiveComposer.current || sourceId !== "composer" || composerCircuit === lastComposerCircuit.current || runLoading) return;
     lastComposerCircuit.current = composerCircuit;
     activateCircuit(composerCircuit, {
       id: "composer",
@@ -437,7 +445,7 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
     setRunError(null);
     setResult(null);
     setMobilePane("results");
-    setNotice({ kind: "info", text: `Running ${sourceLabel} with ${formatEngineName(engine)} under a ${formatInteger(normalizedMemory)} MB declared budget.` });
+    setNotice({ kind: "info", text: `Running ${sourceLabel} with ${formatEngineName(engine)} under a ${formatInteger(normalizedMemory)} MiB declared budget.` });
 
     try {
       const nextResult = await labApi.simulateV2(circuit, options);
@@ -513,7 +521,7 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
             ["Structure", localAnalysis.isClifford ? "Clifford-compatible" : `non-Clifford · T ${localAnalysis.tCount}`],
             ["Exact memory", localAnalysis.statevectorHuman],
             ["Selected route", formatEngineName(engine)],
-            ["Run policy", `${formatInteger(maxMemoryMb)} MB · ${noiseEnabled ? "noise" : "ideal"} · ${allowApproximation ? "MPS allowed" : "exact first"}`],
+            ["Run policy", `${formatInteger(maxMemoryMb)} MiB · ${noiseEnabled ? "noise" : "ideal"} · ${allowApproximation ? "MPS allowed" : "exact first"}`],
           ].map(([label, value]) => (
             <div key={label} className="shrink-0 border-r border-line-hairline px-3 py-2 last:border-r-0 sm:px-4">
               <span className="block font-display text-[8px] font-semibold uppercase tracking-[.14em] text-ink-400">{label}</span>
@@ -589,7 +597,7 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
           <EngineAvailabilityPanel engines={engines} loading={engineLoading} error={engineError} onRetry={() => void loadEngineCatalog()} />
         </aside>
 
-        <main className="mt-3 min-w-0 xl:mt-0 xl:grid xl:min-h-0 xl:grid-rows-[minmax(0,1fr)_minmax(14rem,26vh)] xl:gap-3">
+        <main className={`mt-3 min-w-0 xl:mt-0 xl:grid xl:min-h-0 xl:gap-3 ${dockExpanded ? "xl:grid-rows-[minmax(6rem,0.42fr)_minmax(0,1.58fr)]" : "xl:grid-rows-[minmax(0,1fr)_minmax(14rem,26vh)]"}`}>
           <div className={`${mobilePane === "engines" ? "block" : "hidden"} min-w-0 space-y-3 xl:block xl:min-h-0 xl:overflow-y-auto`}>
             <EngineStrip
               analysis={analysis}
@@ -614,7 +622,15 @@ export function SimulatorLab({ composerCircuit, initialCircuit, initialEnginePar
           </div>
 
           <div className={`${mobilePane === "results" ? "block" : "hidden"} mt-3 min-w-0 overflow-hidden rounded-xl2 border border-line bg-surface shadow-floating xl:mt-0 xl:block xl:min-h-0`}>
-            <SimulationResultPanel result={result} loading={runLoading} error={runError} elapsedMs={runElapsedMs} onRetry={() => void runSimulation()} />
+            <SimulationResultPanel
+              result={result}
+              loading={runLoading}
+              error={runError}
+              elapsedMs={runElapsedMs}
+              onRetry={() => void runSimulation()}
+              expanded={dockExpanded}
+              onToggleExpanded={() => setDockExpanded((value) => !value)}
+            />
           </div>
         </main>
       </div>

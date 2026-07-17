@@ -1,26 +1,19 @@
 "use client";
 
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { SimulatorLab } from "@/components/simulator/SimulatorLab";
 import { useWorkspace } from "@/components/workspace/WorkspaceProvider";
 
 function SimulatorRoute() {
   const searchParams = useSearchParams();
-  const { circuit, labCircuit, setLabCircuit } = useWorkspace();
+  const { circuit, labCircuit } = useWorkspace();
   const handoffRef = useRef(labCircuit);
-
-  // Consume the explicit Composer handoff once. Future visits and the rail's
-  // "Live Composer" action must see the current workspace circuit, not a stale
-  // snapshot retained forever in shared state.
-  useEffect(() => {
-    if (handoffRef.current) setLabCircuit(null);
-  }, [setLabCircuit]);
 
   return (
     <SimulatorLab
       composerCircuit={circuit}
-      initialCircuit={handoffRef.current ?? circuit}
+      initialCircuit={handoffRef.current ?? undefined}
       initialEngineParam={searchParams.get("engine")}
       initialSourceParam={searchParams.get("source")}
     />

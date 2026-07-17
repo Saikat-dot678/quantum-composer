@@ -12,6 +12,7 @@
 // silently-wrong preview if resolution fails).
 import type { ComplexPair } from "./customGates";
 import type { ResolvedCircuit, ResolvedOperation } from "./customGateResolve";
+import { canonicalOperationOrder } from "./circuitOrdering";
 
 export const MAX_PREVIEW_QUBITS = 5;
 
@@ -152,7 +153,7 @@ export function computeStatePreview(circuit: ResolvedCircuit): StatePreview | nu
   re[0] = 1;
 
   let ignoredMeasurements = 0;
-  const ordered = [...circuit.operations].sort((left, right) => left.moment - right.moment);
+  const ordered = canonicalOperationOrder(circuit.operations);
   for (const operation of ordered) {
     if (operation.gate === "measure") {
       ignoredMeasurements += 1;

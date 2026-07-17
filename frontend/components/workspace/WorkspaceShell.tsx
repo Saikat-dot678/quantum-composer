@@ -19,11 +19,13 @@ import { useWorkspace } from "./WorkspaceProvider";
 const MODE_ROUTES: Record<Mode, string> = {
   composer: "/composer",
   simulator: "/simulator",
+  hardware: "/hardware",
   crypto: "/crypto",
 };
 
 function modeFromPathname(pathname: string): Mode {
   if (pathname.startsWith("/simulator")) return "simulator";
+  if (pathname.startsWith("/hardware")) return "hardware";
   if (pathname.startsWith("/crypto")) return "crypto";
   return "composer";
 }
@@ -114,7 +116,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         </main>
 
         <footer className="border-t border-line-hairline bg-surface px-5 py-4 text-center text-[11px] leading-5 text-ink-500">
-          <p>Educational simulator · Not affiliated with IBM · No real-hardware execution is configured.</p>
+          <p>Educational simulator and hardware-mapping workbench · Not affiliated with IBM · No real-hardware execution is configured.</p>
           <p className="mt-0.5">Arbitrary 100-qubit statevector simulation is infeasible. Larger circuits are supported only when stabilizer or low-entanglement MPS structure makes them tractable.</p>
         </footer>
       </div>

@@ -59,6 +59,31 @@ function circuitWithCustom(id: string, qubits: number[], numQubits = 2): Circuit
   };
 }
 
+describe("validateCircuitData: canonical timeline", () => {
+  const base = (operations: unknown[]) => ({ num_qubits: 2, num_clbits: 2, shots: 100, operations });
+  const operation = { gate: "h", qubits: [0], clbits: [], params: {} };
+
+  it("rejects missing and string moments rather than coercing them", () => {
+    expect(validateCircuitData(base([{ ...operation }]))).toBeNull();
+    expect(validateCircuitData(base([{ ...operation, moment: "3" }]))).toBeNull();
+  });
+
+  it("returns imported operations in stable numeric-moment order", () => {
+    const circuit = validateCircuitData(base([
+      { gate: "x", qubits: [1], clbits: [], params: {}, moment: 10 },
+      { gate: "h", qubits: [0], clbits: [], params: {}, moment: 2 },
+    ]));
+    expect(circuit?.operations.map((item) => item.moment)).toEqual([2, 10]);
+  });
+
+  it("rejects same-moment classical-bit conflicts", () => {
+    expect(validateCircuitData(base([
+      { gate: "measure", qubits: [0], clbits: [0], params: {}, moment: 1 },
+      { gate: "measure", qubits: [1], clbits: [0], params: {}, moment: 1 },
+    ]))).toBeNull();
+  });
+});
+
 describe("validateCircuitData: custom operations", () => {
   it("accepts a well-formed custom operation with a customId", () => {
     const circuit = validateCircuitData(circuitWithCustom("bell", [0, 1]));
@@ -144,6 +169,21 @@ describe("encodeCircuitLinkCompressed / decodeCompressedCircuitParamDetailed: ba
     expect(decoded.ok).toBe(true);
     expect(decoded.circuit).toEqual(PLAIN_CIRCUIT);
     expect(decoded.definitions ?? []).toEqual([]);
+  });
+
+  it("round-trips scrambled input in canonical moment order", async () => {
+    const circuit: CircuitData = {
+      num_qubits: 2, num_clbits: 0, shots: 100,
+      operations: [
+        { gate: "x", qubits: [1], clbits: [], params: {}, moment: 2 },
+        { gate: "h", qubits: [0], clbits: [], params: {}, moment: 0 },
+      ],
+    };
+    const encoded = await encodeCircuitLinkCompressed(circuit, "https://example.test");
+    expect(encoded.ok).toBe(true);
+    const payload = new URL(encoded.url!).searchParams.get("c2")!;
+    const decoded = await decodeCompressedCircuitParamDetailed(payload);
+    expect(decoded.circuit?.operations.map((operation) => operation.gate)).toEqual(["h", "x"]);
   });
 });
 

@@ -1,7 +1,7 @@
 # Quantum Composer
 
 **Quantum Composer is an educational quantum circuit composer, multi-engine
-simulator, and quantum cryptography lab.** It is a learning/portfolio project —
+simulator, hardware-mapping workbench, and quantum cryptography lab.** It is a learning/portfolio project —
 not an IBM product, IBM service, or original research. The browser submits
 declarative, validated circuit JSON; it **never** submits or executes Python.
 
@@ -46,7 +46,7 @@ honest about the hard limits of classical simulation.
   exported/imported circuit JSON embed the custom definitions they reference,
   so they round-trip to a browser that has never seen them before.
 - Circuit JSON, generated Qiskit code, OpenQASM 2, counts histogram, depth, gate
-  counts, and text diagram, docked in a collapsible bottom sheet that
+  counts, and a zoomable Qiskit Matplotlib SVG circuit diagram, docked in a collapsible bottom sheet that
   auto-expands after a run. The V1 code/QASM/exact path remains limited to
   8 qubits, 8 classical bits, 200 operations, and 8,192 shots; circuits outside
   that envelope use the V2 simulator path and retain JSON output.
@@ -103,6 +103,31 @@ honest about the hard limits of classical simulation.
   1000-qubit Clifford via stabilizer) and what does not (arbitrary 100-qubit
   non-Clifford is rejected with an explanation).
 
+### Hardware Mapping
+
+- `/hardware` accepts the current resolved Composer circuit, validated circuit
+  JSON, OpenQASM 2, and optional OpenQASM 3. Arbitrary pasted Python is rejected
+  and never executed.
+- Targets can be seeded generic topologies, imported/exported manual hardware
+  JSON, dynamically discovered installed IBM fake snapshots, or real IBM
+  backends available to the authenticated account. Generic/manual mapping works
+  without IBM credentials; no real backend name is hardcoded as guaranteed.
+- The interactive topology synchronizes logical/physical qubit selection, used
+  edges, and routing SWAPs with the layout table and routing timeline. It offers
+  zoom/pan/fit, search, SVG export, calibration tooltips, and connectivity,
+  activity, error, T1/T2, duration, and routing overlays. Generated positions
+  are explicitly labeled schematic.
+- Target-aware Qiskit preset pass managers expose initial/final layout, active
+  and idle physical qubits, original/transpiled metrics, inserted SWAPs,
+  duration where available, and a fully disclosed error-product heuristic.
+  Up to six targets can be compared; queue is displayed but never solely drives
+  the recommendation.
+- IBM credentials remain backend-side. Environment/saved accounts are
+  preferred; an optional temporary session is memory-only, clearable,
+  HTTPS/origin/rate/timeout protected, and provider errors are redacted. Real
+  QPU job submission is intentionally not implemented—mapping never runs a job.
+  See [docs/HARDWARE_MAPPING.md](docs/HARDWARE_MAPPING.md).
+
 ### Cryptography Lab
 - Protocol-level, optionally seeded simulators: **BB84**, **E91** (with a CHSH
   indicator), **B92**, and a **QRNG**. Reusing an explicit seed reproduces a
@@ -125,8 +150,8 @@ Short answer: **it depends entirely on the circuit.**
   currently accepts at most 4096 qubits, and practical runtime still depends on
   circuit depth, entanglement, operations, shots, and host resources.
 - ❌ **No, not for arbitrary universal circuits.** A full statevector stores
-  `2**n` complex amplitudes = `16 * 2**n` bytes. That is ~16 GB at 30 qubits,
-  ~16 PB at 50 qubits, and roughly `2 × 10¹⁶` PB at 100 qubits — physically
+  `2**n` complex amplitudes = `16 * 2**n` bytes. That is ~16 GiB at 30 qubits,
+  ~16 PiB at 50 qubits, and roughly `2 × 10¹⁶` PiB at 100 qubits — physically
   impossible on any classical computer. Density-matrix (noisy) simulation is
   even worse at `16 * 4**n` bytes.
 - 🖥️ **Real IBM quantum hardware is different.** A physical quantum processor
@@ -160,19 +185,21 @@ It does **not** claim to:
 ## Architecture
 
 ```text
-Next.js UI ── Composer · Simulator Lab · Cryptography Lab
-        │ declarative Circuit JSON  /  protocol parameters
+Next.js UI ── Composer · Simulator Lab · Hardware Mapping · Cryptography Lab
+        │ declarative circuit/target JSON  /  protocol parameters
         ▼
 FastAPI + Pydantic (strict validation, no user Python)
         │
         ├─ analysis/   circuit_analyzer + resource_estimator (feasibility)
         ├─ engines/    router → statevector | MPS | stabilizer | density | Stim
+        ├─ hardware/   discovery → Target → preset pass manager → mapping
         └─ crypto/     BB84 | E91 | B92 | QRNG | privacy amplification
 ```
 
 The monorepo contains `frontend/` (Next.js/TypeScript/Tailwind), `backend/`
 (FastAPI/Qiskit), and `docs/`. See [Architecture](docs/ARCHITECTURE.md),
 [Simulation Engines](docs/SIMULATION_ENGINES.md),
+[Graphical Circuit Diagrams](docs/CIRCUIT_DIAGRAMS.md),
 [Cryptography Lab](docs/CRYPTOGRAPHY_LAB.md), and the
 [Advanced Development Roadmap](docs/BEAST_MODE_ROADMAP.md).
 
@@ -200,6 +227,10 @@ The API is at `http://localhost:8000`, with interactive docs at `/docs`. If the
 development requirements are installed, run tests from `backend/` with
 `python -m pytest -q`.
 
+The base runtime installs Matplotlib and `pylatexenc` for Qiskit's graphical
+circuit drawer. Rendering uses the headless `Agg` backend and does not install
+or require Qt or another desktop GUI toolkit.
+
 **Optional Stim engine** — the very fast, large-scale Clifford simulator. Without
 it, `GET /engines` reports `stim_stabilizer` as unavailable and `auto` falls back
 to Aer's `stabilizer` method. Engine discovery handles the missing dependency,
@@ -207,6 +238,14 @@ and the test suite covers this fallback.
 
 ```bash
 python -m pip install -r requirements-stim.txt
+```
+
+**Optional Hardware Mapping integrations** — IBM fake snapshots,
+account-scoped backend discovery, and OpenQASM 3 import. Generic/manual targets
+and OpenQASM 2 work with the base requirements.
+
+```bash
+python -m pip install -r requirements-hardware.txt
 ```
 
 ## Run the frontend
@@ -218,6 +257,7 @@ npm run dev        # dev server
 npm run lint       # eslint (--max-warnings 0)
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
+npm run test:unit  # Vitest unit/contract helpers
 npm run test:e2e   # Playwright: smoke + accessibility + visual
                    # first run: npx playwright install chromium
 ```
@@ -232,7 +272,7 @@ assert the workbench renders honestly when the API is unreachable:
   (including actions registered by the Composer), the projects drawer, mobile
   bottom sheets and route switching, canvas arrow-key cursor navigation, the
   live state preview, and an explicit offline-state assertion.
-- `e2e/a11y.spec.ts` — **axe** (WCAG 2 A/AA) on all three routes plus the
+- `e2e/a11y.spec.ts` — **axe** (WCAG 2 A/AA) on the core routes plus the
   palette and projects drawer; fails on serious/critical violations.
 - `e2e/visual.spec.ts` — screenshots at desktop and phone widths. Baselines are
   platform-specific, so this suite is skipped in CI; refresh locally with
@@ -257,15 +297,24 @@ is additionally skipped in CI, like `visual.spec.ts`, since baselines are
 platform-specific — refresh locally with
 `npx playwright test e2e/state-analysis-visual.spec.ts --update-snapshots`).
 
+`e2e/hardware.spec.ts` and `e2e/hardware-visual.spec.ts` cover current-circuit
+and custom-gate handoff, generic/manual/fake targets, mocked account-scoped IBM
+discovery, OpenQASM import, Python rejection, optimization levels, synchronized
+layout/edge selection, accessibility, narrow viewports, and four visual
+baselines. `e2e/responsive-audit.spec.ts` checks all four workspaces at the
+document-overflow viewport matrix, 80â€“200% layout zoom, and the custom-gate
+wizard at tablet and phone sizes. Backend-dependent cases skip honestly when
+FastAPI is not reachable; no real IBM credential is required.
+
 ### Workspace model
 
 The app is an **Instrument Canvas**: a slim 56px top bar (product mark, a
-segmented control switching the three real routes, backend/project status,
-palette and projects triggers) sits above whichever route owns the rest of
-the viewport — **`/composer`**, **`/simulator`**, **`/crypto`** (deep-linkable,
-back/forward works, each code-split). Circuit telemetry lives as a contextual
-on-canvas chip in Composer rather than as global chrome repeated on every
-route. The circuit lives in a workspace provider shared across routes:
+segmented control switching the four real routes, backend/project status,
+palette and projects triggers) sits above **`/composer`**, **`/simulator`**,
+**`/hardware`**, or **`/crypto`** (deep-linkable, back/forward-aware, and
+code-split). Circuit telemetry lives as a contextual on-canvas chip in Composer
+rather than as global chrome repeated on every route. The circuit lives in a
+workspace provider shared across routes:
 
 - **Undo/redo** — every edit is history-tracked (`Ctrl+Z` / `Ctrl+Shift+Z` /
   `Ctrl+Y`, plus toolbar buttons).
@@ -328,6 +377,8 @@ intended ownership is stable:
   `AmplitudeTable`);
 - `components/crypto/` — `ProtocolDiagram` (the actor/channel visualization),
   shared protocol navigation, plus BB84, E91, B92, and QRNG result panels;
+- `components/hardware/` — circuit/target controls, interactive topology,
+  synchronized mapping results, routing timeline, and target comparison;
 - `components/output/` — generated code, measurement results, and histograms;
 - `components/ui/` — lightweight repository-owned form, feedback, display, and
   accessibility primitives;
@@ -348,8 +399,8 @@ Visual composer limits remain separate from simulation feasibility limits.
   `npm run build`.
 
 The workflow does not currently run browser-level UI, accessibility, or
-end-to-end tests. The smoke scenarios below are manual until that coverage is
-added.
+end-to-end tests. Those checks are automated in the local Playwright suite but
+remain a CI integration gap.
 
 ## API
 
@@ -374,19 +425,33 @@ added.
 - `POST /crypto/b92/simulate`
 - `POST /crypto/qrng/simulate`
 
+**Hardware Mapping:**
+
+- `GET /hardware/status`; `POST /hardware/connect`; `POST /hardware/disconnect`
+- `GET /hardware/backends` — normalized generic/fake/account catalog + filters.
+- `POST /hardware/target/describe`; `POST /hardware/circuit/import`
+- `POST /hardware/transpile`; `POST /hardware/compare`
+
+There is intentionally no hardware job-submission endpoint.
+
 ### Request boundaries and errors
 
 | API path | Request boundary | Intended use |
 | --- | --- | --- |
 | V1 `/circuit/*` | 1–8 qubits, 0–8 classical bits, 1–8192 shots, at most 200 operations | Validation, code/QASM export, and small exact simulation |
-| V2 `/circuit/analyze` | 1–4096 qubits, 0–4096 classical bits, 1–1,000,000 shots, at most 200,000 operations | Structural analysis and a resource estimate against a fixed 1024 MB reference budget |
-| V2 `/circuit/simulate-v2` | Same advanced circuit container; options allow a declared 16–65,536 MB budget | Engine-routed execution; structure and actual resources still determine feasibility |
+| V2 `/circuit/analyze` | 1–4096 qubits, 0–4096 classical bits, 1–1,000,000 shots, at most 200,000 operations | Structural analysis and a resource estimate against a fixed 1,024 MiB reference budget |
+| V2 `/circuit/simulate-v2` | Same advanced circuit container; options allow a declared 16–65,536 MiB budget | Engine-routed execution; structure and actual resources still determine feasibility |
 
 Invalid or infeasible requests normally return HTTP `422`; a requested engine
 or quantum dependency that is unavailable returns `503`. The limits above are
 validation ceilings, not performance promises. In particular, the analyzer's
-1024 MB reference estimate and the simulator's caller-declared
+1,024 MiB reference estimate and the simulator's caller-declared
 `max_memory_mb` can produce different risk labels.
+
+Every operation must include `moment` as a non-negative integer. Numeric strings,
+missing/fractional/NaN values, and same-moment qubit or classical-bit conflicts
+are rejected. Numeric `moment` defines execution chronology; JSON array order is
+only the stable tie-breaker for legal independent operations in one moment.
 
 ### Example: analyze then simulate
 
@@ -440,9 +505,10 @@ With the backend on `:8000` and the frontend on `:3000`:
 7. **Optional Stim** — `GET /engines` shows `stim_stabilizer` available only if
    `stim` is installed; the UI and router behave correctly either way.
 
-Backend contract equivalents run headless via `python -m pytest -q` (130 tests
-in the current suite). CI runs backend tests plus frontend lint/typecheck/build
-checks; it does not automate the browser interactions listed above.
+Backend contract equivalents run headless via `python -m pytest -q` (160 tests
+in the current suite). The frontend currently has 140 Vitest tests and 112
+Playwright tests. CI runs backend tests plus frontend lint/typecheck/build
+checks; it does not yet run the browser suite.
 
 ## Limits and current scope
 
@@ -474,10 +540,6 @@ checks; it does not automate the browser interactions listed above.
   backend-computed state. Custom gates are never automatically classified as
   Clifford-compatible from a matrix alone — only decomposition/composite
   gates that flatten entirely into Clifford built-ins are recognized as such.
-  A pre-existing timing gap in the Composer→Simulator-Lab custom-gate handoff
-  (discovered, not introduced, while building the state-analysis viewers) can
-  cause an unresolved custom gate to be honestly rejected (422) instead of
-  analyzed — see `audit.md`.
 - Post-simulation quantum-state analysis is opt-in and has its own qubit
   ceilings, independent of (and never larger than) each engine's own
   simulation cap: a full amplitude list stops at 12 qubits, any state
@@ -488,6 +550,8 @@ checks; it does not automate the browser interactions listed above.
 - Estimator budgets and qubit caps reduce accidental resource use but do not
   replace process/container memory limits, concurrency control, or timeouts.
 
-No IBM credentials are requested or stored. `backend/hardware.py` is an interface
-boundary only. IBM Quantum Composer inspired the educational interaction model;
-this project is not affiliated with or endorsed by IBM.
+IBM credentials are accepted only by the backend credential boundary described
+in [docs/HARDWARE_MAPPING.md](docs/HARDWARE_MAPPING.md): they are never stored in
+projects, URLs, browser storage, logs, or responses. IBM Quantum Composer
+inspired the educational interaction model; this project is not affiliated with
+or endorsed by IBM.

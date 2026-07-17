@@ -38,6 +38,14 @@ movement rejects for the identical reason, using the identical message.
 
 ## Moving a placed gate
 
+Moving changes the operation's numeric `moment` (and its qubit operands when
+needed) but intentionally does not reorder the JavaScript array. Undo/redo and
+save/reload preserve that moment. Every execution/export consumer canonicalizes
+by moment, so an operation's stale array position can never override the new
+visual chronology. Duplication and paste assign a validated numeric target
+moment; project, JSON, and share-link decoders reject malformed moments rather
+than converting strings.
+
 Two equivalent paths, sharing one state shape (`ActiveMove` in
 `CircuitCanvas.tsx`) and one ghost/snap-guide rendering block, regardless of
 which one is driving it:
@@ -154,11 +162,30 @@ sit next to it:
   gate resolves the way the preview assumed. Neither action, nor the
   comparison it triggers, ever runs automatically on an edit; both require an
   explicit click.
+- **"Open in Hardware Mapping"** hands off the same resolved snapshot and
+  navigates to `/hardware`. Decomposition/composite definitions are flattened,
+  matrix definitions become validated unitary operations, and missing
+  definitions stop the action. The Hardware workspace preserves logical qubit
+  identity while its topology, layout table, used-edge controls, and routing
+  SWAP timeline synchronize logical-to-physical selection. Transpilation occurs
+  only after **Transpile and map** is clicked and never submits a QPU job.
 
 The local preview's own limits (≤ 5 qubits, ignores measurement, resolves
 custom gates first or explains why it can't) are unchanged by any of this —
 see [CUSTOM_GATES.md](CUSTOM_GATES.md) and `README.md`'s "Live state preview"
 section.
+
+## Responsive behavior
+
+Desktop gate/inspector rails become labelled modal bottom sheets below the
+wide-canvas breakpoint; the SVG remains the spatial source of truth and its
+toolbar wraps/scrolls locally. The custom-gate wizard is a viewport-bounded,
+internally scrolling full-height drawer, including during its entry animation,
+so its header/footer remain reachable at 360×800. Project/library drawers,
+command palette, output dock, minimap controls, and mobile navigation each own
+their local scroll behavior—there is no global overflow-hiding workaround.
+Playwright covers the required desktop/tablet/phone/landscape sizes, 80–200%
+layout zoom, document width, and wizard bounds.
 
 ## Performance
 

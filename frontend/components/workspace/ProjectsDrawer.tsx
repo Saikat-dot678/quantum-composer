@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { validateCircuitBundle, validateCircuitData } from "@/lib/circuitShare";
+import { canonicalizeCircuit } from "@/lib/circuitOrdering";
 import { localCustomGateRepository } from "@/lib/customGateRepository";
 import { collectReferencedDefinitions } from "@/lib/customGateResolve";
 import { listProjects, MAX_PROJECT_OPERATIONS, type Project } from "@/lib/projects";
@@ -98,9 +99,10 @@ export function ProjectsDrawer({ open, onClose }: { open: boolean; onClose: () =
     // doesn't depend on the sender's local custom-gate library.
     const library = new Map(localCustomGateRepository.list().map((definition) => [definition.id, definition]));
     const definitions = collectReferencedDefinitions(workspace.circuit, library);
+    const orderedCircuit = canonicalizeCircuit(workspace.circuit);
     const payload = definitions.length > 0
-      ? { format: CIRCUIT_BUNDLE_FORMAT, version: 1, circuit: workspace.circuit, definitions }
-      : workspace.circuit;
+      ? { format: CIRCUIT_BUNDLE_FORMAT, version: 1, circuit: orderedCircuit, definitions }
+      : orderedCircuit;
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");

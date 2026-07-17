@@ -24,6 +24,7 @@ import {
   type DecompositionStep,
 } from "@/lib/customGates";
 import { previewQiskitCode } from "@/lib/customGateCodePreview";
+import { canonicalOperationOrder } from "@/lib/circuitOrdering";
 import { localCustomGateRepository } from "@/lib/customGateRepository";
 import { CUSTOM_GATE_TEMPLATES, type DefinitionTemplate } from "@/lib/customGateTemplates";
 import { stepOperandArity, validateDefinition } from "@/lib/customGateValidation";
@@ -91,9 +92,8 @@ interface SelectionMatch {
 function computeSelectionMatch(circuit: CircuitData, qubitRange: [number, number], momentRange: [number, number]): SelectionMatch {
   const [qLo, qHi] = [Math.min(...qubitRange), Math.max(...qubitRange)];
   const [mLo, mHi] = [Math.min(...momentRange), Math.max(...momentRange)];
-  const operations = circuit.operations
-    .filter((op) => op.moment >= mLo && op.moment <= mHi && op.qubits.every((q) => q >= qLo && q <= qHi))
-    .sort((a, b) => a.moment - b.moment || Math.min(...a.qubits) - Math.min(...b.qubits));
+  const operations = canonicalOperationOrder(circuit.operations
+    .filter((op) => op.moment >= mLo && op.moment <= mHi && op.qubits.every((q) => q >= qLo && q <= qHi)));
   const clbitSet = new Set<number>();
   for (const op of operations) for (const c of op.clbits) clbitSet.add(c);
   const clbitList = [...clbitSet].sort((a, b) => a - b);
@@ -293,14 +293,14 @@ export function CustomGateWizard({
 
   return (
     <ModalPortal>
-      <div className="fixed inset-0 z-[90] bg-black/50" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="fixed inset-0 z-[90] overflow-hidden bg-black/50" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
         <section
           ref={panelRef}
           role="dialog"
           aria-modal="true"
           aria-labelledby="custom-gate-wizard-title"
           tabIndex={-1}
-          className="drawer-enter absolute inset-y-0 right-0 flex w-[min(40rem,100vw)] flex-col border-l border-line bg-surface shadow-floating"
+          className="drawer-enter absolute inset-y-0 right-0 flex w-[min(40rem,100vw)] max-w-full flex-col border-l border-line bg-surface shadow-floating"
         >
           <header className="flex items-center justify-between gap-3 border-b border-line-hairline px-5 py-4">
             <div>

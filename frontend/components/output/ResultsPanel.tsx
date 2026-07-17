@@ -1,12 +1,14 @@
 import { Badge, EmptyState, Panel, SectionHeader, Spinner, WarningCallout } from "@/components/ui/primitives";
-import { CodeBlock } from "@/components/ui/CodeBlock";
 import { HistogramPanel } from "@/components/ui/HistogramPanel";
+import { CircuitDiagram } from "@/components/results/CircuitDiagram";
+import type { CircuitDiagramPayload } from "@/lib/circuitDiagram";
 
 export interface ResultView {
   counts: Record<string, number>;
   depth: number;
   gate_counts: Record<string, number>;
   diagram?: string | null;
+  circuit_diagram?: CircuitDiagramPayload | null;
   warnings: string[];
   selectedEngine?: string;
   engineReason?: string;
@@ -20,7 +22,7 @@ export function ResultsPanel({ result, running }: { result: ResultView | null; r
       <SectionHeader
         eyebrow="Measurement analysis"
         title="Simulation results"
-        description="Shot counts, circuit metrics, warnings, and the backend-rendered text diagram."
+        description="Shot counts, circuit metrics, warnings, and the backend-rendered graphical circuit diagram."
         right={result ? (
           <div className="flex flex-wrap gap-2">
             {result.selectedEngine && <Badge tone="cyan">{result.selectedEngine}</Badge>}
@@ -32,7 +34,10 @@ export function ResultsPanel({ result, running }: { result: ResultView | null; r
       />
 
       {running ? (
+        <div className="space-y-4">
         <Spinner label="Running the validated circuit…" />
+          <CircuitDiagram diagram={null} title="Simulated circuit" loading />
+        </div>
       ) : result ? (
         <HistogramPanel counts={result.counts} />
       ) : (
@@ -51,12 +56,12 @@ export function ResultsPanel({ result, running }: { result: ResultView | null; r
                 : <span className="text-xs text-lab-faint">No gates reported.</span>}
             </div>
           </div>
-          {result.diagram && (
-            <div className="min-w-0">
-              <h3 className="instrument-label mb-2">Circuit diagram</h3>
-              <CodeBlock content={result.diagram} label="Text diagram" maxHeight="max-h-48" />
-            </div>
-          )}
+          <CircuitDiagram
+            diagram={result.circuit_diagram}
+            title="Simulated circuit"
+            warning={result.warnings.find((warning) => /diagram/i.test(warning))}
+            className="xl:col-span-2"
+          />
         </div>
       )}
 

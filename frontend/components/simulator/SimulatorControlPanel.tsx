@@ -226,7 +226,7 @@ export function SimulatorControlPanel({
 
             <FormField
               htmlFor="simulator-memory-budget"
-              label={<>Run budget <span className="font-mono text-accent-cyan">{formatInteger(maxMemoryMb)} MB</span></>}
+              label={<>Run budget <span className="font-mono text-accent-cyan">{formatInteger(maxMemoryMb)} MiB</span></>}
               hint="A router guard, not a measurement of free server RAM. Engine lanes recalculate immediately."
             >
               <div className="flex items-center gap-2">
@@ -243,7 +243,7 @@ export function SimulatorControlPanel({
                 />
                 <input
                   type="number"
-                  aria-label="Run memory budget in megabytes"
+                  aria-label="Run memory budget in mebibytes"
                   min={LIMITS.simulation.minMemoryBudgetMb}
                   max={LIMITS.simulation.maxMemoryBudgetMb}
                   step={16}

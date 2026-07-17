@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { formatEngineName, formatInteger } from "@/lib/formatting";
 import type { SimulationV2Response } from "@/lib/labTypes";
-import { AlertTriangle, Play, RefreshCw } from "lucide-react";
+import { AlertTriangle, Maximize2, Minimize2, Play, RefreshCw } from "lucide-react";
 import { HistogramPanel } from "../ui/HistogramPanel";
 import { Badge, Button, CopyButton } from "../ui/primitives";
 import { QuantumStatePanel } from "./state/QuantumStatePanel";
+import { CircuitDiagram } from "../results/CircuitDiagram";
 
 interface SimulationResultPanelProps {
   result: SimulationV2Response | null;
@@ -14,6 +15,9 @@ interface SimulationResultPanelProps {
   error: string | null;
   elapsedMs?: number;
   onRetry: () => void;
+  /** Desktop-only: whether the dock currently takes most of the vertical space. */
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
 }
 
 type ResultView = "distribution" | "state" | "diagnostics" | "diagram";
@@ -39,7 +43,7 @@ function DockHeader({ children }: { children: React.ReactNode }) {
   return <div className="flex min-h-11 flex-wrap items-center justify-between gap-2 border-b border-lab-border bg-lab-panel px-4 py-2 sm:px-5">{children}</div>;
 }
 
-export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, onRetry }: SimulationResultPanelProps) {
+export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, onRetry, expanded = false, onToggleExpanded }: SimulationResultPanelProps) {
   const [view, setView] = useState<ResultView>("distribution");
 
   if (loading) {
@@ -127,41 +131,58 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
   ];
 
   return (
-    <section aria-labelledby="result-dock-heading" className="h-full min-h-[17rem] border-t border-lab-borderStrong bg-lab-surface">
-      <DockHeader>
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-          <div>
-            <p className="instrument-label text-accent-green">Execution dock</p>
-            <h2 id="result-dock-heading" className="mt-0.5 text-xs font-semibold text-lab-text">{formatEngineName(result.selected_engine)} completed</h2>
+    <section aria-labelledby="result-dock-heading" className="flex h-full min-h-[17rem] flex-col border-t border-lab-borderStrong bg-lab-surface">
+      <div className="shrink-0">
+        <DockHeader>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <div>
+              <p className="instrument-label text-accent-green">Execution dock</p>
+              <h2 id="result-dock-heading" className="mt-0.5 text-xs font-semibold text-lab-text">{formatEngineName(result.selected_engine)} completed</h2>
+            </div>
+            <div className="hidden h-6 w-px bg-lab-border sm:block" aria-hidden="true" />
+            <span className="font-mono text-[10px] text-lab-muted">{formatInteger(sampleSummary.shots)} shots</span>
+            <span className="font-mono text-[10px] text-lab-muted">{formatInteger(sampleSummary.outcomes)} outcomes</span>
+            <span className="font-mono text-[10px] font-semibold text-accent-cyan">{result.timing_ms.toFixed(1)} ms engine time</span>
           </div>
-          <div className="hidden h-6 w-px bg-lab-border sm:block" aria-hidden="true" />
-          <span className="font-mono text-[10px] text-lab-muted">{formatInteger(sampleSummary.shots)} shots</span>
-          <span className="font-mono text-[10px] text-lab-muted">{formatInteger(sampleSummary.outcomes)} outcomes</span>
-          <span className="font-mono text-[10px] font-semibold text-accent-cyan">{result.timing_ms.toFixed(1)} ms engine time</span>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <Badge tone={autoSelected ? "cyan" : "neutral"}>{autoSelected ? "auto-selected" : "manual route"}</Badge>
-          {approximate && <Badge tone="amber">MPS may approximate</Badge>}
-        </div>
-      </DockHeader>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge tone={autoSelected ? "cyan" : "neutral"}>{autoSelected ? "auto-selected" : "manual route"}</Badge>
+            {approximate && <Badge tone="amber">MPS may approximate</Badge>}
+            {onToggleExpanded && (
+              <button
+                type="button"
+                onClick={onToggleExpanded}
+                aria-pressed={expanded}
+                aria-label={expanded ? "Restore the results dock to its normal height" : "Expand the results dock to most of the screen height"}
+                className="hidden min-h-8 items-center gap-1.5 rounded-md border border-lab-border px-2 text-[10px] font-semibold text-lab-muted transition hover:border-accent-cyan hover:text-accent-cyan xl:inline-flex"
+              >
+                {expanded ? <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" /> : <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                {expanded ? "Restore" : "Expand"}
+              </button>
+            )}
+          </div>
+        </DockHeader>
 
-      <div className="flex min-h-10 items-center gap-1 overflow-x-auto border-b border-lab-border bg-lab-bg/45 px-4 sm:px-5" aria-label="Result dock view">
-        {views.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            aria-pressed={view === item.id}
-            onClick={() => setView(item.id)}
-            className={`min-h-8 shrink-0 border-b-2 px-3 text-[11px] font-semibold transition ${view === item.id ? "border-accent-cyan text-accent-cyan" : "border-transparent text-lab-faint hover:text-lab-muted"}`}
-          >
-            {item.label}
-            {item.id === "state" && stateAvailable && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-accent-cyan align-middle" aria-hidden="true" />}
-          </button>
-        ))}
-        <span className="ml-auto shrink-0 text-[9px] text-lab-faint">Transport and analysis excluded from timing</span>
+        <div className="flex min-h-10 items-center gap-1 overflow-x-auto border-b border-lab-border bg-lab-bg/45 px-4 sm:px-5" aria-label="Result dock view">
+          {views.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              aria-pressed={view === item.id}
+              onClick={() => setView(item.id)}
+              className={`min-h-8 shrink-0 border-b-2 px-3 text-[11px] font-semibold transition ${view === item.id ? "border-accent-cyan text-accent-cyan" : "border-transparent text-lab-faint hover:text-lab-muted"}`}
+            >
+              {item.label}
+              {item.id === "state" && stateAvailable && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-accent-cyan align-middle" aria-hidden="true" />}
+            </button>
+          ))}
+          <span className="ml-auto hidden shrink-0 text-[9px] text-lab-faint sm:inline">Transport and analysis excluded from timing</span>
+        </div>
       </div>
 
-      <div className="max-h-[calc(40vh-5.5rem)] min-h-[12rem] overflow-y-auto px-4 py-4 sm:px-5">
+      {/* Below xl this grows with its content (the page scrolls); on xl the
+          parent grid row bounds the section, so flex-1 + min-h-0 turns this
+          into the scroll container without any viewport-height math. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 xl:min-h-[12rem] sm:px-5">
         {view === "distribution" && (
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(15rem,.45fr)]">
             <div className="min-w-0">
@@ -193,7 +214,7 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
               <p className="instrument-label">Simulated quantum state</p>
               <p className="mt-1 text-[10px] text-lab-faint">The actual state returned by {formatEngineName(result.selected_engine)} for this run -- not the Composer&apos;s local live preview.</p>
             </div>
-            <QuantumStatePanel state={result.state_analysis} />
+            <QuantumStatePanel state={result.state_analysis} counts={result.counts} timingMs={result.timing_ms} />
           </div>
         )}
 
@@ -202,12 +223,26 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
             <div>
               <p className="instrument-label">Run resource estimate</p>
               <dl className="mt-2 divide-y divide-lab-border border-y border-lab-border text-[11px]">
-                <div className="flex justify-between gap-3 py-2"><dt className="text-lab-faint">Configured budget</dt><dd className="font-mono font-semibold text-accent-cyan">{formatInteger(result.resource_estimate.max_memory_mb)} MB</dd></div>
+                <div className="flex justify-between gap-3 py-2"><dt className="text-lab-faint">Configured budget</dt><dd className="font-mono font-semibold text-accent-cyan">{formatInteger(result.resource_estimate.max_memory_mb)} MiB</dd></div>
                 <div className="flex justify-between gap-3 py-2"><dt className="text-lab-faint">Statevector</dt><dd className="text-right font-mono text-lab-text">{result.resource_estimate.statevector_memory_human}</dd></div>
                 <div className="flex justify-between gap-3 py-2"><dt className="text-lab-faint">Density matrix</dt><dd className="text-right font-mono text-lab-text">{result.resource_estimate.density_matrix_memory_human}</dd></div>
                 <div className="flex justify-between gap-3 py-2"><dt className="text-lab-faint">Risk label</dt><dd className="font-mono text-lab-text">{result.resource_estimate.risk_label}</dd></div>
                 <div className="flex justify-between gap-3 py-2"><dt className="text-lab-faint">Circuit depth</dt><dd className="font-mono text-lab-text">{formatInteger(result.depth)}</dd></div>
               </dl>
+              {Object.keys(result.gate_counts).length > 0 && (
+                <div className="mt-3">
+                  <p className="instrument-label">Gate profile</p>
+                  <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label="Gate counts">
+                    {Object.entries(result.gate_counts)
+                      .sort((left, right) => right[1] - left[1])
+                      .map(([gate, count]) => (
+                        <li key={gate} className="rounded-md border border-lab-border bg-lab-bg px-2 py-0.5 font-mono text-[10px] text-lab-muted">
+                          {gate} × {formatInteger(count)}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
               {result.resource_estimate.notes.length > 0 && <ul className="mt-3 space-y-1 text-[10px] leading-4 text-lab-faint">{result.resource_estimate.notes.map((note) => <li key={note}>• {note}</li>)}</ul>}
             </div>
             <div className="min-w-0">
@@ -222,21 +257,12 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
 
         {view === "diagram" && (
           <div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="instrument-label">Backend text diagram</p>
-                <p className="mt-1 text-[10px] text-lab-faint">Generated only for circuits up to 12 qubits and 80 operations.</p>
-              </div>
-              <Badge tone={result.diagram ? "green" : "neutral"}>{result.diagram ? "available" : "omitted at scale"}</Badge>
-            </div>
-            {result.diagram ? (
-              <pre className="mt-3 max-h-64 overflow-auto border border-lab-border bg-lab-bg p-3 font-mono text-[10px] leading-4 text-slate-300">{result.diagram}</pre>
-            ) : (
-              <div className="mt-3 border border-dashed border-lab-borderStrong px-4 py-8 text-center">
-                <p className="text-xs font-semibold text-lab-muted">Diagram deliberately omitted</p>
-                <p className="mx-auto mt-1 max-w-lg text-[10px] leading-4 text-lab-faint">Rendering a large text circuit would add noise and payload cost. The circuit fingerprint, gate profile, and engine diagnostics remain available.</p>
-              </div>
-            )}
+            <CircuitDiagram
+              diagram={result.circuit_diagram}
+              title="Simulated circuit"
+              theme="lab"
+              warning={result.warnings.find((warning) => /diagram/i.test(warning))}
+            />
           </div>
         )}
       </div>

@@ -14,6 +14,7 @@ import { ModalPortal, useModalLifecycle } from "@/components/workspace/Modal";
 import type { CustomDefinition } from "@/lib/customGates";
 import { previewQiskitCode } from "@/lib/customGateCodePreview";
 import { resolveCustomOperations } from "@/lib/customGateResolve";
+import { canonicalOperationOrder } from "@/lib/circuitOrdering";
 import type { CircuitData, CircuitOperation } from "@/lib/types";
 
 export function CustomGateExpandPreview({
@@ -59,9 +60,7 @@ export function CustomGateExpandPreview({
               <div>
                 <p className="eyebrow mb-1.5">Flattened operations ({resolved.circuit?.operations.length})</p>
                 <ol className="space-y-1 font-mono text-[11px] text-ink-700">
-                  {resolved.circuit?.operations
-                    .slice()
-                    .sort((a, b) => a.moment - b.moment)
+                  {resolved.circuit && canonicalOperationOrder(resolved.circuit.operations)
                     .map((op, index) => (
                       <li key={index} className="rounded-md bg-surface-sunken px-2 py-1">
                         {op.gate.toUpperCase()} · q{op.qubits.join(",")}{op.clbits.length ? ` · c${op.clbits.join(",")}` : ""} · t{op.moment}

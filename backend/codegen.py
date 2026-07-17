@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from schemas import CircuitRequest
-from validators import ordered_operations
+from validators import canonical_operation_order
 
 
 def _number(value: float | int) -> str:
@@ -21,7 +21,7 @@ def generate_qiskit_code(request: CircuitRequest) -> str:
     body: list[str] = []
     has_measurement = False
     has_unitary = False
-    for _, operation in ordered_operations(request):
+    for operation in canonical_operation_order(request.operations):
         gate = operation.gate
         q = operation.qubits
         if gate in {"x", "y", "z", "h", "s", "t"}:

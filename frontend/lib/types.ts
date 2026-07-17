@@ -1,4 +1,5 @@
 import type { ComplexPair } from "./customGates";
+import type { CircuitDiagramPayload } from "./circuitDiagram";
 
 // "custom" is a placed instance of a user-defined gate/operation (see
 // lib/customGates.ts) — `customId` then points at the library definition.
@@ -29,7 +30,7 @@ export interface CircuitOperation {
   label?: string;
 }
 export interface CircuitData { num_qubits: number; num_clbits: number; shots: number; operations: CircuitOperation[] }
-export interface SimulationResult { counts: Record<string, number>; depth: number; gate_counts: Record<string, number>; diagram: string; warnings: string[] }
+export interface SimulationResult { counts: Record<string, number>; depth: number; gate_counts: Record<string, number>; diagram: string; circuit_diagram: CircuitDiagramPayload | null; warnings: string[] }
 export interface Preset { id: string; name: string; description: string; circuit: CircuitData }
 export const TWO_QUBIT_GATES: GateName[] = ["cx", "cz", "swap"];
 export const ROTATION_GATES: GateName[] = ["rx", "ry", "rz"];

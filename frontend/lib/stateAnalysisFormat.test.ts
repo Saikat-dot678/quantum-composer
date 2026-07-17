@@ -10,6 +10,8 @@ import {
   formatProbabilityPercent,
   isApproximate,
   magnitudeToHeatmapColor,
+  recognizedStateLabel,
+  signedToHeatmapColor,
   phaseToHslColor,
   qubitOrderLabel,
   representationLabel,
@@ -159,6 +161,34 @@ describe("magnitudeToHeatmapColor", () => {
   it("darkens monotonically as magnitude increases", () => {
     const lightnessOf = (color: string) => Number(color.match(/, (\d+(?:\.\d+)?)%\)/)![1]);
     expect(lightnessOf(magnitudeToHeatmapColor(0.25))).toBeGreaterThan(lightnessOf(magnitudeToHeatmapColor(0.75)));
+  });
+});
+
+describe("signedToHeatmapColor", () => {
+  it("uses different hues for positive and negative values", () => {
+    expect(signedToHeatmapColor(0.5)).toContain("hsl(190");
+    expect(signedToHeatmapColor(-0.5)).toContain("hsl(35");
+  });
+  it("clamps out-of-range values", () => {
+    expect(signedToHeatmapColor(2)).toBe(signedToHeatmapColor(1));
+    expect(signedToHeatmapColor(-2)).toBe(signedToHeatmapColor(-1));
+  });
+});
+
+describe("recognizedStateLabel", () => {
+  it("labels all six canonical states and the maximally mixed point", () => {
+    expect(recognizedStateLabel({ x: 0, y: 0, z: 1 })).toBe("|0⟩");
+    expect(recognizedStateLabel({ x: 0, y: 0, z: -1 })).toBe("|1⟩");
+    expect(recognizedStateLabel({ x: 1, y: 0, z: 0 })).toBe("|+⟩");
+    expect(recognizedStateLabel({ x: -1, y: 0, z: 0 })).toBe("|−⟩");
+    expect(recognizedStateLabel({ x: 0, y: 1, z: 0 })).toBe("|+i⟩");
+    expect(recognizedStateLabel({ x: 0, y: -1, z: 0 })).toBe("|−i⟩");
+    expect(recognizedStateLabel({ x: 0, y: 0, z: 0 })).toBe("maximally mixed");
+  });
+  it("tolerates small floating-point deviation but rejects genuinely different vectors", () => {
+    expect(recognizedStateLabel({ x: 0.005, y: -0.004, z: 0.999 })).toBe("|0⟩");
+    expect(recognizedStateLabel({ x: 0.7071, y: 0, z: 0.7071 })).toBeNull();
+    expect(recognizedStateLabel({ x: 0.3, y: 0, z: 0 })).toBeNull();
   });
 });
 

@@ -10,6 +10,7 @@
 // global state is pure and maximally entangled.
 import { useState } from "react";
 import type { StateAnalysisResponse } from "@/lib/labTypes";
+import { formatComplex, recognizedStateLabel } from "@/lib/stateAnalysisFormat";
 import { Badge, Callout } from "../../ui/primitives";
 import { BlochSphere3D } from "../../composer/BlochSphere3D";
 
@@ -47,6 +48,10 @@ export function BlochQubitView({ state }: { state: StateAnalysisResponse }) {
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={entry.is_mixed ? "amber" : "green"}>{entry.is_mixed ? "mixed reduced state" : "pure reduced state"}</Badge>
             <Badge tone="neutral">magnitude {entry.bloch_magnitude.toFixed(3)}</Badge>
+            {(() => {
+              const label = recognizedStateLabel(entry.bloch_vector);
+              return label ? <Badge tone="cyan" title="Nearest canonical state within tolerance -- a display label, not part of any calculation">≈ {label}</Badge> : null;
+            })()}
           </div>
           <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-[11px]">
             <div><dt className="text-lab-faint">x</dt><dd className="font-mono text-lab-text">{entry.bloch_vector.x.toFixed(4)}</dd></div>
@@ -59,6 +64,23 @@ export function BlochQubitView({ state }: { state: StateAnalysisResponse }) {
             <div><dt className="text-lab-faint">Entropy</dt><dd className="font-mono text-lab-text">{entry.von_neumann_entropy_bits.toFixed(4)} bits</dd></div>
             <div><dt className="text-lab-faint">P(|1⟩)</dt><dd className="font-mono text-lab-text">{(entry.probability_1 * 100).toFixed(2)}%</dd></div>
           </dl>
+          <div>
+            <p className="instrument-label">Reduced density matrix ρ(q{entry.qubit})</p>
+            <table className="mt-1.5 border-collapse font-mono text-[10px] text-lab-muted">
+              <caption className="sr-only">Two by two reduced density matrix for qubit {entry.qubit}</caption>
+              <tbody>
+                {entry.reduced_density_matrix.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {row.map((value, columnIndex) => (
+                      <td key={columnIndex} className="border border-lab-border bg-lab-bg px-2 py-1.5">
+                        {formatComplex(value)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 

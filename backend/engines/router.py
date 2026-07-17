@@ -19,6 +19,7 @@ from engines.base import (
     aer_available,
     stim_available,
 )
+from visualization.circuit_renderer import CircuitDiagramRenderResult, render_circuit_diagram
 
 # Static description of every engine, used by GET /engines and the UI.
 ENGINE_CATALOG: list[dict[str, Any]] = [
@@ -224,8 +225,26 @@ def _maybe_diagram(request: Any, num_qubits: int, operation_count: int) -> str |
         from circuit_builder import build_circuit
 
         return str(build_circuit(request).draw(output="text"))
-    except Exception:  # pragma: no cover - diagram is best-effort
+    except Exception:  # pragma: no cover - legacy diagram is best-effort
         return None
+
+
+def _maybe_graphical_diagram(request: Any, num_qubits: int, operation_count: int) -> CircuitDiagramRenderResult:
+    """Build only circuits within the renderer's public safety envelope."""
+    if num_qubits > 48 or operation_count > 400:
+        return CircuitDiagramRenderResult(
+            payload=None,
+            warning="Graphical circuit diagram omitted because the circuit exceeds the safe render-size limit.",
+        )
+    try:
+        from circuit_builder import build_circuit
+
+        return render_circuit_diagram(build_circuit(request))
+    except Exception as exc:  # Rendering is best-effort and must not fail execution.
+        return CircuitDiagramRenderResult(
+            payload=None,
+            warning=f"The circuit simulation completed, but the graphical diagram could not be rendered ({type(exc).__name__}).",
+        )
 
 
 def simulate(request: Any, options: Any) -> dict[str, Any]:
@@ -257,16 +276,22 @@ def simulate(request: Any, options: Any) -> dict[str, Any]:
     if auto_reason:
         reason = f"{auto_reason} {result.engine_reason}".strip()
 
+    rendered = _maybe_graphical_diagram(request, analysis["num_qubits"], analysis["operation_count"])
+    warnings = list(result.warnings)
+    if rendered.warning:
+        warnings.append(rendered.warning)
+
     return {
         "counts": result.counts,
         "depth": analysis["depth"],
         "gate_counts": analysis["gate_counts"],
         "selected_engine": result.selected_engine,
         "engine_reason": reason,
-        "warnings": result.warnings,
+        "warnings": warnings,
         "resource_estimate": analysis["resource_estimate"],
         "timing_ms": timing_ms,
         "diagram": _maybe_diagram(request, analysis["num_qubits"], analysis["operation_count"]),
+        "circuit_diagram": rendered.payload,
         "metadata": {
             **result.metadata,
             "requested_engine": requested,

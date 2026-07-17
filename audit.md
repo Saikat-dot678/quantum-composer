@@ -2270,3 +2270,504 @@ unitary-gate integration test).
   imaginary/phase heatmap toggle) — the full complex value is available via
   the cell's accessible table representation and the JSON export, but a
   multi-mode heatmap was not built in this pass.
+
+# Post-Processing, Responsive UI, and Hardware Mapping Audit (2026-07-17)
+
+## Initial condition (recorded before implementation)
+
+**Environment.** qiskit 2.5.0, qiskit-aer 0.17.2, stim 1.16.0, fastapi
+0.139.0, pydantic 2.13.4. `qiskit-ibm-runtime` was NOT installed at audit
+time (installed 0.48.0 during this pass for verification; it will remain an
+*optional* dependency with runtime detection, the same pattern as stim).
+`qiskit_qasm3_import` was also absent (OpenQASM 3 import raises
+MissingOptionalLibraryError without it); installed 0.6.0 alongside. Qiskit
+2.5.0 core verified working for everything the hardware workspace needs
+without IBM credentials: `GenericBackendV2` (arbitrary size/coupling/seed,
+optional noise_info with T1/T2/gate-error/duration synthesis),
+`generate_preset_pass_manager` (levels 0-3, layout extraction via
+`tqc.layout.initial_index_layout()`/`final_index_layout()`), manual `Target`
+construction with `InstructionProperties`, and `qasm2.loads`.
+`qiskit-ibm-runtime` 0.48.0 provides `FakeProviderForBackendV2` with 60 fake
+snapshots including `fake_fez` (156q, cz/rz/sx/x basis, dynamic-circuit
+instructions, per-qubit T1/T2, per-edge errors, `online_date` timestamp).
+
+**hardware.py.** A 7-line Protocol stub ("Future remote-execution boundary;
+v1 exposes no hardware route or credentials") with a single `submit()`
+signature taking the *V1* `CircuitRequest` — predates V2 entirely. Decision:
+replace it wholesale with a real `backend/hardware/` package; nothing
+references the old Protocol anywhere (verified by grep), so removal is safe.
+
+**Post-processing display gaps** (backend returns it; UI never shows it):
+
+- `global_metrics.stabilizer_generators` — the *core content* of a
+  stabilizer-engine state summary — is returned but NO view renders it. The
+  Quantum State tab for a stabilizer run shows only badges/warnings and
+  (Stim/small-Aer) deterministic outcome probabilities. Worst offender.
+- Amplitude real/imaginary components: returned in every `amplitude` entry,
+  displayed only as a pre-formatted complex string; no separate re/im/
+  magnitude columns, no phase-in-radians column (degrees only in tables).
+- No amplitude search/filter, no zero-probability toggle, no user-facing
+  top-k control in the result views themselves, no virtualization (bounded
+  slice + "+N more" only; full detail can return 4096 rows of which at most
+  ~32 ever render).
+- Density matrix: magnitude heatmap only — no real-part, imaginary-part, or
+  phase heatmap modes; no numeric matrix table (screen-reader access is via
+  per-cell title attributes only); eigenvalues are computed backend-side for
+  entropy but discarded, never returned or displayed.
+- Bloch view: no recognizable-state labeling (|0>, |1>, |+>, |->, |+i>,
+  |-i>) even when the vector matches a canonical state within tolerance.
+- Overview: shot count and engine time live only in the dock header, not in
+  the state overview; `global_metrics.amplitude_count` /
+  `nonzero_amplitude_count` never shown; `is_pure` not surfaced as a badge.
+- `SimulationV2Response.gate_counts` appears only inside the raw metadata
+  JSON blob in Diagnostics, never as a readable breakdown.
+- Distribution tab shows raw sampled counts only — no normalized-frequency
+  column and no side-by-side with exact probabilities when state analysis
+  is present.
+
+**Responsive problems measured with Playwright (initial condition):**
+
+- Execution dock content area is capped at `max-h-[calc(40vh-5.5rem)]`
+  (`SimulationResultPanel.tsx:164`). Measured: at 1366x768 the Bloch view
+  gets 219px visible for 524px of content; at 1280x720, 200px for 524px
+  (62% hidden behind an inner scrollbar). Screenshot `audit-1280x720-bloch`
+  shows the sphere entirely below the fold. This matches the reported
+  "content cannot be seen completely." The desktop grid also pins the dock
+  to `minmax(14rem,26vh)` (`SimulatorLab.tsx:592`), so even scrolled, the
+  dock cannot grow. No expand/maximize affordance exists.
+- No *horizontal document* overflow found at 360x800 on /composer,
+  /simulator, or /crypto (docWidth == winWidth == 360 on all three) — inner
+  scroll containers (protocol diagram min-w-[560px], entanglement table
+  min-w-[28rem], amplitude table min-w-[26rem]) all scroll correctly inside
+  their own overflow-x-auto wrappers.
+- Custom-gate wizard dialog at 768x1024: fits the viewport (bottom == winH,
+  bottom-sheet style), no clipping measured.
+- Fixed-dimension inventory recorded (grep): CodeBlock max-h-[380px],
+  CodePanel max-h-[430px], CommandPalette max-h-[46vh], crypto
+  ProtocolDiagram min-w-[520-560px] (scrollable), EngineStrip h-[4.5rem]
+  tab strip. These are bounded-scroll patterns, not clipping; kept.
+
+**Grep sweep (TODO/FIXME/placeholder/stub/mock/hardcoded):** no TODO/FIXME/
+stub markers in source; all "placeholder" hits are HTML input placeholders.
+No hardcoded backend names outside engine ids. One stale-documentation item:
+ARCHITECTURE.md's trust-boundary section says "hardware.py is a future
+interface boundary only," which this pass replaces. The
+`components/simulator/state/*` views were all built in the immediately
+preceding pass and are complete but under-detailed per the list above.
+
+**Type-contract check.** `lib/labTypes.ts` mirrors `schemas.py` field-for-
+field for state analysis (verified in the prior pass); no drift found. The
+crypto protocol responses remain untyped-dict on the backend (documented,
+pre-existing).
+
+# Codex Continuation Audit
+
+## Baseline validation (2026-07-17, before broad changes)
+
+The complete dirty working tree was retained as the authoritative starting
+point. No files were reset, reverted, stashed, cleaned, or committed.
+
+| Command | Exact baseline result |
+| --- | --- |
+| `frontend/npm install` | Passed; dependencies were already current. npm reported 419 audited packages, 2 moderate-severity advisories, and 2 install scripts awaiting the local `allowScripts` decision. |
+| `frontend/npm run typecheck` | Passed. |
+| `frontend/npm run lint` | Passed with zero warnings. |
+| `frontend/npm run build` | Passed; Next.js 15.5.20 generated 7 static pages. The build patched missing SWC entries in the lockfile and requested a follow-up `npm install`. |
+| `frontend/npm run test:unit` | Passed: 5 files, 129 tests. |
+| `frontend/npx playwright test e2e/state-analysis.spec.ts e2e/state-analysis-visual.spec.ts` | Failed: 18/18 timed out in `gotoSimulatorWithCircuit` while waiting for `/composer`. The configured server could not bind port 3130 (`EADDRINUSE`), so this is recorded as a baseline environment/server-lifecycle failure rather than a verified feature failure. |
+| `backend/python -m pytest -q` | Passed: 130 tests in 1.08 s; one upstream Starlette `httpx` deprecation warning. |
+
+The implementation and final validation sections below distinguish these
+baseline results from post-change results.
+
+# Post-Processing UI, Responsive Audit, and Hardware Mapping
+
+## Final status and preserved work
+
+The complete dirty working tree was preserved. Nothing was reset, reverted,
+stashed, cleaned, discarded, or committed. Useful in-progress state-analysis
+views, schema additions, tests, and audit artifacts were completed in place.
+The old seven-line `backend/hardware.py` protocol stub was the only superseded
+implementation: it was replaced by the importable `backend/hardware/` package
+and is no longer referenced.
+
+Status after code and runtime verification:
+
+| Area | Initial verified status | Final status |
+| --- | --- | --- |
+| State post-processing backend | Partially complete; useful global/statevector fields existed, but reduced single-qubit matrices and density eigenvalues were not a complete public contract | Complete for the bounded exact/density/stabilizer outputs described below |
+| State post-processing UI | Partial; multiple returned fields were invisible and dense results were clipped or reduced to small slices | Complete for current response contracts, with virtualization and explicit truncation |
+| Responsive UI | Partial; no document overflow was found, but the short desktop result dock trapped most content behind a small inner scroller | Complete for the automated viewport/zoom matrix; the desktop dock has an explicit expand control and mobile content is not trapped |
+| Hardware Mapping | Missing as a user workspace; only a future execution protocol existed | Complete mapping-only workspace for generic, manual, installed fake, and account-discovered IBM targets |
+| Real hardware execution | Intentionally absent | Intentionally deferred and clearly disabled; no submission endpoint or misleading run control exists |
+
+This section supersedes the older historical limitation list immediately above:
+the density view now has real/imaginary/magnitude/phase modes, a numeric table,
+and eigenvalues; stabilizer generators, amplitude components, phase radians,
+canonical Bloch labels, overview metrics, gate counts, and exact-versus-sampled
+probabilities are now visible.
+
+## Post-processing field coverage
+
+| Contract area | Final presentation |
+| --- | --- |
+| Engine/run metadata | Engine, method, exact/approximate state, shots, seed when supplied, simulation time, state type, truncation and warnings |
+| Global state metrics | Purity, von Neumann entropy, amplitude/nonzero counts, density eigenvalues, and stabilizer generators |
+| Amplitudes | Search, zero filtering, user-selected limits, virtualized rows, basis state, probability, magnitude, phase in degrees/radians, and real/imaginary values |
+| Sampled distribution | Counts, normalized frequency, and side-by-side exact probability where exact amplitudes are available |
+| Density matrix | Magnitude, real, imaginary, and phase heatmaps; accessible complex numeric table; eigenvalue spectrum; purity/entropy explanation |
+| Per-qubit state | Bloch vector and sphere, purity, entropy, recognized canonical state when within tolerance, and the 2x2 reduced density matrix |
+| Entanglement | Global entropy/purity, per-qubit entropy, pairwise metrics returned by the bounded analyzer, and safely bounded bipartition summaries |
+| Circuit metadata | Human-readable gate-count breakdown plus raw diagnostic metadata/export |
+
+Large amplitude results advertise both payload truncation and UI filtering. The
+32-row regression proves the table uses a bounded DOM window rather than
+rendering every row. Measurement semantics remain explicit: terminal
+measurements describe the pre-measurement state, while unsupported
+mid-circuit-collapse analysis returns a reason instead of an invented state.
+
+## Responsive findings and fixes
+
+Initial measurements found no document-level horizontal overflow on the core
+routes, but found a 192px-visible/542px-scroll-height result dock at 1366x768
+and 1280x720. The dock now exposes an accessible expand/collapse action (192px
+to 427px in the 1280x720 regression), while the mobile dock grows with its
+content instead of nesting a 40vh scroller. Dense tables and protocol diagrams
+retain intentional, local horizontal scrolling.
+
+The custom-gate wizard is constrained to the viewport, uses a localized
+overflow boundary, and remains reachable at 768x1024, 430x932, and 360x800.
+Hardware controls stack below the topology/mapping workspace on narrow screens;
+long backend names truncate accessibly; toolbar controls remain keyboard and
+touch reachable. Binary memory labels were normalized to KiB/MiB/GiB/TiB/PiB/
+EiB.
+
+Automated coverage found no document overflow for `/composer`, `/simulator`,
+`/crypto`, or `/hardware` at 1920x1080, 1440x900, 1366x768, 1280x720,
+1024x768, 820x1180, 768x1024, 430x932, 390x844, 360x800, and 844x390. The
+workspace-shell audit also passed layout zoom at 80%, 100%, 125%, 150%, and
+200%.
+
+## Hardware architecture and data flow
+
+`/hardware` is a fourth App Router workspace under the shared
+`WorkspaceProvider`. Composer creates an explicit, resolved snapshot handoff;
+the mapping workspace may also reload the live Composer circuit, import the
+validated declarative JSON/bundle format, import OpenQASM 2/3, or reject Python
+without executing it. Custom decomposition/composite gates are flattened and
+matrix gates retain their matrix and label through an idempotent resolver.
+
+The FastAPI router exposes status, connect/disconnect, backend catalog,
+target-description, circuit-import, transpile, and comparison operations. A
+strict Pydantic schema discriminates generic, manual, installed-fake, and IBM
+sources. Generic and manual targets work with base Qiskit; IBM Runtime/fake
+snapshots and OpenQASM 3 are optional capabilities detected at runtime.
+
+Target-aware transpilation uses `generate_preset_pass_manager(target=...)`
+with optimization levels 0â€“3, deterministic seed, optional validated initial
+layout, and supported layout/routing methods. Responses include original and
+mapped metrics, initial/final logical-to-physical layout, permutation, active
+and idle qubits, basis instructions, used physical edges, captured routing
+SWAPs, bounded text diagrams, transpile time, estimated duration where known,
+and a clearly qualified independent-error-product heuristic.
+
+The SVG topology provides pointer/wheel pan and zoom, fit/reset, qubit jump,
+tooltips, accessible legend/pattern cues, and export. Connectivity, logical
+layout, circuit activity, calibration, duration, and routing overlays are
+available. Logical/physical row selection, used-edge selection, and SWAP-event
+selection synchronize with the graph. Generated coordinates are labeled
+schematic; provider/manual coordinates are identified as supplied.
+
+Comparison accepts up to six compatible targets, keeps failures visible, and
+shows capacity, mapping overhead, calibration/error/duration coverage, pending
+jobs, and warnings. Its disclosed deterministic score weights SWAPs, depth,
+the optional heuristic success estimate, and missing calibration; queue is
+shown but deliberately excluded.
+
+## IBM credential and security review
+
+Discovery is account-scoped and never assumes `ibm_fez` or another device is
+available. Environment variables and a locally saved trusted Qiskit account are
+preferred. The optional session token travels only in a JSON POST body, is held
+only by the backend process, is cleared from the frontend input immediately,
+and is never returned, logged, placed in URLs, project/share data, cookies, or
+browser storage. Disconnect clears the in-memory service.
+
+Outside localhost, temporary connection requires HTTPS. The endpoint validates
+Origin against documented local origins plus
+`QUANTUM_COMPOSER_CORS_ORIGINS`, rate-limits connection attempts to five per
+client per minute, bounds provider calls with an 18-second timeout, rejects
+extra request fields, and returns redacted provider errors. Tests verify that a
+known secret never appears in responses or captured logs. No execution route,
+job submission, polling, cancellation, or result retrieval exists.
+
+## Tests and screenshots
+
+Added/expanded backend tests cover state-contract regression, reduced density
+matrices, exact/truncated semantics, generic/manual target validation,
+installed fake discovery/normalization, an unavailable requested fake,
+account discovery filters and optional metadata, no-credential behavior,
+credential redaction/rate/origin/HTTPS controls, QASM/Python boundaries,
+transpilation/layout/SWAP metrics, comparison, and the execution-disabled
+contract.
+
+Frontend unit coverage includes state-analysis formatting, complex/phase
+formatting, hardware formatting, backend-name truncation, units, and resolver
+idempotency. Playwright covers statevector/density/Bloch/entanglement views,
+virtualization, export, custom-gate Simulator and Hardware handoffs,
+generic/manual/fake/IBM flows, mapping/edge synchronization, optimization
+levels, responsive overflow/zoom, keyboard reachability, axe scans, and visual
+regressions.
+
+Hardware baselines were added for backend browsing/topology, mapped circuit,
+comparison, and mobile workflow. State-analysis baselines were refreshed for
+the amplitude/phase, density-matrix, and mobile result views. Diagnostic audit
+captures record short desktop docks, mobile routes, the wizard, expanded dock,
+stabilizer output, probability comparison, phase detail, density modes, and
+virtualization.
+
+## Final validation
+
+| Command | Exact final result |
+| --- | --- |
+| `frontend/npm install` | Passed twice around the final build; 419 packages audited, 2 moderate advisories, 160 funding notices, and `sharp`/`unrs-resolver` install scripts awaiting the repository owner's `allowScripts` decision. |
+| `frontend/npm run typecheck` | Passed (`tsc --noEmit`). |
+| `frontend/npm run lint` | Passed with zero warnings (`--max-warnings 0`). |
+| `frontend/npm run build` | Passed; Next.js 15.5.20 generated 8 static pages. `/hardware` is 15.2 kB with 134 kB first-load JS. The build patched Windows SWC lockfile entries; the requested follow-up install passed. |
+| `frontend/npm run test:unit` | Passed: 6 files, 136 tests. |
+| `frontend/npm run test:e2e -- --reporter=line` | Passed: 101 Chromium tests using 10 workers in 17.4 s. |
+| `backend/python -m pytest -q` | Passed: 147 tests in 3.15 s; two upstream warnings (Starlette TestClient/httpx deprecation and FakeNighthawk calibration realism). |
+| `git diff --check` | Passed before final documentation edits; only expected Git LF-to-CRLF working-copy notices were printed. Rechecked after documentation below. |
+
+## Remaining limitations and manual review
+
+- Real QPU execution remains intentionally deferred. Mapping is useful and
+  independently complete, but there is no job submission/history/cancellation
+  surface.
+- IBM discovery was validated with installed fake backends and mocked provider
+  contracts, not a real account/token. A maintainer with account access should
+  perform the documented live credential smoke test in the intended deployment
+  environment without recording the token.
+- Provider calibration/queue metadata is optional and time-sensitive. Missing
+  values remain unavailable and are excluded from the heuristic rather than
+  fabricated.
+- Topology coordinates are schematic unless supplied by the target. Very dense
+  100+ qubit graphs remain inspectable but naturally require zoom/pan.
+- MPS-native reduced-density extraction and NumPy `.npy`/`.npz` export remain
+  deferred; current exact state-derived detail stays within backend safety
+  bounds, and JSON/CSV exports are available.
+- The desktop result dock intentionally opens compact at short heights; its
+  verified expand action exposes substantially more content, and all remaining
+  content is reachable by the explicit panel scroll. Physical-device touch,
+  native browser-chrome zoom, Safari/Firefox rendering, screen-reader workflow,
+  and a live IBM account remain manual-review items beyond Chromium automation.
+- npm reports two moderate dependency advisories and two unapproved package
+  install scripts. No forced breaking dependency upgrade or script approval was
+  performed without owner review.
+
+No secret value was found in the tracked/untracked source sweep, no commit was
+created, and owner approval is still required before committing.
+
+# Graphical Qiskit Circuit Diagrams
+
+## Scope audit
+
+Three user-facing Qiskit text-diagram locations existed:
+
+1. Composer/V1 `ResultsPanel`, where `SimulationResponse.diagram` was rendered
+   through `CodeBlock` as a copyable ASCII block.
+2. Simulator Lab's Diagram tab, where `SimulationV2Response.diagram` was
+   rendered in a `<pre>`.
+3. Hardware Mapping's mapped-circuit disclosure, where logical and transpiled
+   text diagrams were rendered in two `<pre>` blocks.
+
+The custom-gate wizard and expanded-operation dialog also contain `<pre>`
+elements, but those are generated Qiskit source and declarative flattened-step
+diagnostics rather than circuit drawings. They were intentionally preserved,
+as were Qiskit code, OpenQASM, metadata JSON, and error/log text.
+
+## Shared backend renderer
+
+`backend/visualization/circuit_renderer.py` is now the single rendering helper
+for V1, V2, hardware import, and hardware transpilation. It configures
+Matplotlib `Agg` before importing `pyplot`, calls Qiskit's Matplotlib drawer
+with `output="mpl"`, `idle_wires=False`, the standard `iqp` style, and a
+dynamic fold, then saves a tight white-background SVG with 0.15-inch padding.
+
+Matplotlib calls are protected by a process lock. Every successful figure is
+closed in `finally`; newly opened figures are also closed if the drawer raises.
+Identical circuits/options use a stable QPY-derived hash and a process-local,
+24-entry LRU cache. SVG output is capped at 5.5 MB.
+
+Dynamic folding is based on actual circuit depth and size:
+
+- <=18 depth and <=32 operations: no fold;
+- <=72 depth and <=140 operations: fold 32;
+- larger safe circuits: fold 20.
+
+Preflight declines diagrams above 48 qubits, 64 classical bits, 400 operations,
+depth 240, or 260 estimated wrapped wire rows. These are rendering limits only;
+simulation/mapping can still succeed and return an explanatory diagram warning.
+
+## Typed transport and compatibility
+
+The optional `CircuitDiagramPayload` contains `format="svg"`,
+`encoding="base64"`, content, bounded width/height, selected fold, and a
+`wrapped` flag. Simulation/import uses `circuit_diagram`; transpilation uses
+`original_circuit_diagram` and `transpiled_circuit_diagram`.
+
+Raw SVG is never inserted with `dangerouslySetInnerHTML`. The frontend validates
+the base64 envelope and uses an image data URL. The legacy `diagram`,
+`original_diagram`, and `transpiled_diagram` fields remain populated where they
+were previously available for older clients, but no normal UI renders them.
+
+## Shared frontend viewer and responsiveness
+
+`frontend/components/results/CircuitDiagram.tsx` is reused in all three result
+surfaces. It provides 50%-300% zoom, percentage/reset, fit, internally bounded
+horizontal/vertical scrolling, touch panning, a focusable viewport, viewport-
+contained fullscreen with focus trapping/Escape close, SVG download, browser-
+generated PNG download, loading/unavailable/image-error states, and a wrapped-
+circuit explanation.
+
+Fit-to-width has a 50% floor: wide circuits remain readable and scroll instead
+of collapsing into thumbnails. The SVG canvas stays white so Qiskit's normal
+gate palette is readable in both application themes. Composer gives the diagram
+the full width of its existing result card without redesigning the surrounding
+dock. Required responsive and zoom tests continue to report no document-level
+horizontal overflow; explicit diagram checks pass at 1280x720 and 360x800, and
+the existing matrix covers 1920x1080 through 360x800 plus 844x390 and 80%-200%
+layout zoom.
+
+## Failure behavior and dependencies
+
+A graphical-render exception never fails simulation or transpilation. The
+backend logs the actual exception, returns the scientific result, supplies a
+generic diagram warning, and the frontend presents an unavailable state. An API
+regression deliberately forces renderer failure and verifies sampled counts
+still return. The hidden legacy ASCII string is not exposed as a visual
+fallback.
+
+Base runtime dependencies now include `matplotlib>=3.8,<4.0` and
+`pylatexenc>=2.10,<3.0`. No Qt or other GUI dependency was added.
+
+## Tests, screenshots, and validation
+
+Backend coverage includes one-qubit, Bell, measured, multiple-register, custom
+decomposition, custom unitary, folded large, unsafe-size, SVG validity, cache
+bound, failure fallback, figure cleanup, `Agg`, and V1/V2/Hardware response
+integration. Frontend unit coverage validates base64 transport and zoom/fit
+math. Playwright covers loading/unavailable states, zoom/reset/fit, internal
+scrolling, fullscreen, SVG/PNG download, mobile overflow, Simulator Lab reuse,
+Hardware logical/transpiled viewers, and the absence of rendered legacy ASCII.
+
+Five Windows Chromium baselines were added: Bell, medium unfolded, folded
+large, mobile, and fullscreen. Each was visually inspected; the Composer
+diagram was widened within its existing result card after the first critique,
+and unrelated transient toasts are excluded from the baselines.
+
+| Command | Exact result |
+| --- | --- |
+| `backend/python -m pip install -r requirements.txt` | Passed; installed Matplotlib 3.11.0, pylatexenc 2.10, and Matplotlib's non-GUI dependencies. |
+| Headless Uvicorn request to `127.0.0.1:8000/circuit/simulate` | Passed: health `ok`; 3-qubit measured circuit returned a 489x301 base64 SVG (22,596 characters) and 64 shots without Qt/display errors. The already-running reload worker had loaded the new code; a duplicate process correctly failed to bind the occupied port. |
+| `frontend/npm install` | Passed; 419 packages audited, 2 moderate advisories, and 2 package install scripts still awaiting the owner's `allowScripts` decision. |
+| `frontend/npm run typecheck` | Passed (`tsc --noEmit`). |
+| `frontend/npm run lint` | Passed with zero warnings. |
+| `frontend/npm run build` | Passed; Next.js 15.5.20 generated 8 static pages. Final build: Composer 35.3 kB/201 kB first load, Hardware 17.4 kB/137 kB, Simulator 33.5 kB/154 kB. |
+| `frontend/npm run test:unit` | Passed: 7 files, 140 tests. |
+| `frontend/npm run test:e2e -- --reporter=line` | Passed: 112 Chromium tests using 10 workers in 21.5 seconds. Two earlier full runs honestly exposed and led to removal of an unnecessary 20px Hardware disclosure change and hardening of a pre-existing hydration readiness race. |
+| `backend/python -m pytest -q` | Passed: 160 tests in 5.25 seconds; two upstream warnings (Starlette TestClient/httpx deprecation and FakeNighthawk calibration realism). |
+
+## Remaining limitations
+
+- Diagram safety bounds can omit a diagram for a circuit that still simulates.
+- The PNG action converts the SVG in the browser and caps its longest output
+  axis at 4096 pixels; SVG remains the fidelity-preserving download.
+- The LRU cache is per process, not shared across multiple Uvicorn workers.
+- Visual baselines are Windows/Chromium-specific. Safari, Firefox, physical
+  touch hardware, and screen-reader workflow remain manual review items.
+
+No unrelated simulation, API routing, state analysis, hardware execution,
+project, or circuit logic was changed. No commit was created.
+
+# Canonical Circuit Operation Ordering
+
+## Root cause
+
+`frontend/lib/customGateResolve.ts` sorted the editable circuit by visual
+`moment`, flattened it, then discarded every parent moment and greedily assigned
+new moments from per-wire availability. For the four-qubit reproduction, q1 and
+q2 became free after their CX gates, so their later-listed measurements received
+synthetic moments before the q0â†’q3 CX. Backend code generation, simulation, and
+Matplotlib rendering then correctly sorted and consumed those incorrect
+synthetic moments. Separate frontend moment sorts also existed at several
+consumer boundaries, and the backend schema allowed a missing moment and would
+coerce numeric strings.
+
+## Affected paths
+
+The bad resolver output fed V1 code/QASM/simulation, V2 analysis and all engine
+routes, local state preview, graphical/text diagrams, Simulator Lab handoff, and
+hardware mapping. Direct backend requests already had partial stable sorting,
+but it was duplicated through tuple-returning helpers and tolerated missing
+moments. Project/share/JSON decoding validated numeric moments but did not
+canonicalize the returned array or detect same-moment classical-bit conflicts.
+
+## Fix
+
+- `backend/validators.py` now exposes one non-mutating
+  `canonical_operation_order()`: numeric moment first and stable input position
+  only for same-moment ties. Builders, generators, analyzer, Aer state analysis,
+  Stim, diagrams, V1/V2 execution, and hardware JSON input converge on it.
+- `frontend/lib/circuitOrdering.ts` is the corresponding frontend authority.
+  Composer output, Simulator Lab, local preview, API clients, share/project/JSON
+  boundaries, generated custom previews, and hardware JSON calls use it.
+- Backend `moment` is required and strict. Frontend decoders already rejected
+  missing/string values and now return canonical arrays. Both schemas reject
+  same-moment qubit and classical-bit conflicts while preserving independent
+  parallel operations.
+- Custom expansion now orders by `(parent moment, nested local timeline)`.
+  Parent blocks cannot cross. Stable input order is retained within identical
+  timelines; gate name and operand number are never tie-breakers. Matrix gates
+  retain their placed moment whenever no preceding expansion forces a later
+  synthetic slot.
+
+## Tests added
+
+Backend regressions cover numeric/stable/non-mutating ordering, strict moment
+validation, same-moment legality/conflicts, the exact four-qubit circuit,
+scrambled arrays, moved/stale array position semantics, terminal measurements,
+barriers, generated Python, OpenQASM, Qiskit building/diagram input, API codegen,
+and hardware JSON input. Frontend regressions cover the canonical utility,
+resolver chronology, strict import validation, classical conflicts, and share
+round trips. Playwright covers a scrambled four-qubit import through run,
+generated Qiskit, OpenQASM, graphical diagram availability, project save, reload,
+and regeneration.
+
+## Migration and limitations
+
+No stored-project migration converts malformed moments. Existing valid numeric
+moments load unchanged and are normalized to canonical array order; malformed or
+legacy operations without moments are rejected at trust boundaries. Synthetic
+custom-expansion moments preserve chronology and legal parallel local steps but
+need not equal editable canvas columns after a multi-step expansion spills into
+later integer slots. Array position remains the tie-breaker only for operations
+that legally share the exact same moment/timeline and have no explicit stable ID.
+
+## Validation results
+
+| Command | Result |
+| --- | --- |
+| `frontend/npm install` | Passed; 419 packages audited. npm reported 2 moderate advisories and 2 install scripts awaiting the existing `allowScripts` policy. |
+| `frontend/npm run typecheck` | Passed (`tsc --noEmit`). |
+| `frontend/npm run lint` | Passed with zero warnings. |
+| `frontend/npm run build` | Passed; Next.js 15.5.20 generated all 8 static pages. |
+| `frontend/npm run test:unit` | Passed: 8 files, 147 tests. |
+| `frontend/npm run test:e2e -- --reporter=line` | A full parallel run passed 113 Chromium tests in 22.0 seconds. Later parallel reruns exposed one unrelated 1% Hardware snapshot race (112 passed); that test passed in isolation. |
+| `frontend/npm run test:e2e -- --workers=1 --reporter=line` | Final serialized run passed all 113 Chromium tests in 189.6 seconds, including the strengthened move-and-return ordering workflow and every visual baseline. |
+| `backend/python -m pytest -q` | Passed: 174 tests in 6.62 seconds; only the existing Starlette/httpx deprecation and FakeNighthawk calibration warnings. |
+
+The ordering Playwright workflow loaded the exact four-qubit circuit from a
+deliberately scrambled array, ran it, verified the generated Python and OpenQASM
+sequences, displayed the graphical Qiskit SVG, saved the project, reloaded it,
+and regenerated the same sequence. No commit was created.

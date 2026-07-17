@@ -22,15 +22,21 @@ list. The filename is retained to avoid breaking existing links.
   clearly distinguished from Composer's local live preview. See
   [ARCHITECTURE.md](ARCHITECTURE.md) and
   [SIMULATION_ENGINES.md](SIMULATION_ENGINES.md).
+- **Hardware Mapping**: `/hardware`, resolved Composer/custom-gate handoff,
+  circuit JSON and OpenQASM import, safe Python rejection, generic/manual/fake
+  targets, secure account-scoped IBM discovery, interactive calibration
+  topology, target-aware transpilation, layouts/SWAPs/routing metrics, and
+  transparent multi-target comparison. Mapping is independent of execution;
+  see [HARDWARE_MAPPING.md](HARDWARE_MAPPING.md).
+- Responsive application audit across the four workspaces, required desktop/
+  tablet/phone/landscape viewports, layout zoom, dialogs, result docks, large
+  tables, and document-level overflow, with Playwright regression coverage.
 
 ## Near term
 
 - Real IBM backend execution via a reviewed server-side Qiskit Runtime adapter
   (credentials stay server-side; explicit authorization, job polling, quotas).
 - Real device noise models and ideal/noisy comparison.
-- Transpiler and coupling-map visualization.
-- A fix for the Composer→Simulator-Lab custom-gate handoff race discovered
-  while building the state-analysis viewers (see `audit.md`).
 - Direct reduced-state extraction from MPS tensors (currently reuses Aer's
   own full-statevector conversion, qubit-gated for safety) and a
   NumPy-compatible state export.

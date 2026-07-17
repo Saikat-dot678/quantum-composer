@@ -63,7 +63,12 @@ function ComposerRoute() {
     router.push("/simulator");
   }
 
-  return <ComposerMode circuit={workspace.circuit} setCircuit={workspace.setCircuit} onOpenSimulatorLab={openSimulatorLab} />;
+  function openHardwareMapping(next: CircuitData) {
+    workspace.setHardwareCircuit(next);
+    router.push("/hardware");
+  }
+
+  return <ComposerMode circuit={workspace.circuit} setCircuit={workspace.setCircuit} onOpenSimulatorLab={openSimulatorLab} onOpenHardwareMapping={openHardwareMapping} />;
 }
 
 export default function ComposerPage() {

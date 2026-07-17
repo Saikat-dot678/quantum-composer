@@ -1,0 +1,7 @@
+# Optional Hardware Mapping integrations.  Generic/manual mapping works with
+# requirements.txt alone; install this group for IBM fake snapshots, live
+# account-scoped discovery, and OpenQASM 3 import.
+-r requirements.txt
+
+qiskit-ibm-runtime>=0.40,<1.0
+qiskit-qasm3-import>=0.6,<1.0

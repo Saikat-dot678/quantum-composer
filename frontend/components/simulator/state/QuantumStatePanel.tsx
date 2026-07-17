@@ -9,6 +9,10 @@
 //  - BlochQubitView.tsx: per-qubit reduced-state Bloch spheres
 //  - DensityMatrixView.tsx: full density-matrix heatmaps/table
 //  - EntanglementView.tsx: concurrence / Schmidt / entropy
+//
+// Every field the backend returns is either rendered here, rendered in a
+// sub-view, or carried verbatim by the JSON export -- the audit's
+// field-by-field mapping lives in docs/ARCHITECTURE.md.
 import { useMemo, useState } from "react";
 import type { StateAnalysisResponse } from "@/lib/labTypes";
 import {
@@ -32,26 +36,37 @@ import { EntanglementView } from "./EntanglementView";
 type StateSubView = "overview" | "probabilities" | "phases" | "bloch" | "density" | "entanglement";
 
 function ExportRow({ state }: { state: StateAnalysisResponse }) {
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  function tryExport(kind: "json" | "csv") {
+    try {
+      setExportError(null);
+      if (kind === "json") {
+        downloadTextFile("quantum-state.json", stateAnalysisToJson(state), "application/json");
+      } else {
+        const csv = stateAnalysisToCsv(state);
+        if (!csv) {
+          setExportError("This representation has no per-basis-state table to export as CSV -- use the JSON export instead.");
+          return;
+        }
+        downloadTextFile("quantum-state.csv", csv, "text/csv");
+      }
+    } catch (error) {
+      setExportError(error instanceof Error ? `Export failed: ${error.message}` : "Export failed in this browser.");
+    }
+  }
+
   return (
-    <div className="flex flex-wrap gap-2">
-      <Button
-        size="sm"
-        variant="secondary"
-        onClick={() => downloadTextFile("quantum-state.json", stateAnalysisToJson(state), "application/json")}
-      >
-        <Download className="h-3.5 w-3.5" /> Export JSON
-      </Button>
-      <Button
-        size="sm"
-        variant="secondary"
-        disabled={stateAnalysisToCsv(state) === null}
-        onClick={() => {
-          const csv = stateAnalysisToCsv(state);
-          if (csv) downloadTextFile("quantum-state.csv", csv, "text/csv");
-        }}
-      >
-        <Download className="h-3.5 w-3.5" /> Export CSV
-      </Button>
+    <div>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="secondary" onClick={() => tryExport("json")}>
+          <Download className="h-3.5 w-3.5" /> Export JSON
+        </Button>
+        <Button size="sm" variant="secondary" disabled={stateAnalysisToCsv(state) === null} onClick={() => tryExport("csv")}>
+          <Download className="h-3.5 w-3.5" /> Export CSV
+        </Button>
+      </div>
+      {exportError && <p role="alert" className="mt-1.5 text-[11px] text-danger-text">{exportError}</p>}
     </div>
   );
 }
@@ -77,11 +92,39 @@ function MixedFinalNotice() {
   );
 }
 
-function OverviewView({ state }: { state: StateAnalysisResponse }) {
+function StabilizerGenerators({ state }: { state: StateAnalysisResponse }) {
+  const generators = Array.isArray(state.global_metrics?.stabilizer_generators)
+    ? (state.global_metrics.stabilizer_generators as string[])
+    : [];
+  if (generators.length === 0) return null;
+  return (
+    <div>
+      <p className="instrument-label">Stabilizer generators</p>
+      <p className="mt-1 text-[10px] leading-4 text-lab-faint">
+        These {generators.length} Pauli strings fully determine the state under the stabilizer formalism --
+        they are the state, in this representation. Sign, then one Pauli letter per qubit (leftmost = highest
+        qubit index, matching the basis-label convention).
+      </p>
+      <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Stabilizer generator list">
+        {generators.map((generator, index) => (
+          <li key={`${generator}-${index}`} className="rounded-md border border-lab-border bg-lab-bg px-2 py-1 font-mono text-[11px] text-lab-text">
+            {generator}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function OverviewView({ state, shots, timingMs }: { state: StateAnalysisResponse; shots: number | null; timingMs: number | null }) {
   const entries = displayEntries(state);
   const topForDirac = state.top_states ?? entries ?? [];
   const dirac = diracNotation(topForDirac, 6);
-  const purity = typeof state.global_metrics?.purity === "number" ? state.global_metrics.purity : null;
+  const metrics = state.global_metrics ?? {};
+  const purity = typeof metrics.purity === "number" ? metrics.purity : null;
+  const isPure = typeof metrics.is_pure === "boolean" ? metrics.is_pure : null;
+  const amplitudeCount = typeof metrics.amplitude_count === "number" ? metrics.amplitude_count : null;
+  const nonzeroCount = typeof metrics.nonzero_amplitude_count === "number" ? metrics.nonzero_amplitude_count : null;
 
   return (
     <div className="space-y-4">
@@ -89,18 +132,29 @@ function OverviewView({ state }: { state: StateAnalysisResponse }) {
         <Badge tone="cyan">{representationLabel(state.representation)}</Badge>
         <Badge tone="neutral">{semanticPointLabel(state.semantic_point)}</Badge>
         {state.source_engine && <Badge tone="neutral">{state.source_engine}</Badge>}
-        {isApproximate(state) && <Badge tone="amber">approximate</Badge>}
+        <Badge tone={isApproximate(state) ? "amber" : "green"}>{isApproximate(state) ? "approximate" : "exact"}</Badge>
+        {isPure !== null && <Badge tone={isPure ? "green" : "violet"}>{isPure ? "pure state" : "mixed state"}</Badge>}
       </div>
 
       {state.semantic_point === "pre_measurement_state" && <PreMeasurementNotice />}
       {state.semantic_point === "mixed_final_state" && <MixedFinalNotice />}
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-y border-lab-border py-3 text-[11px] sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-y border-lab-border py-3 text-[11px] sm:grid-cols-3 lg:grid-cols-6">
         <div><dt className="text-lab-faint">Qubits</dt><dd className="font-mono text-lab-text">{state.num_qubits ?? "—"}</dd></div>
+        {shots !== null && <div><dt className="text-lab-faint">Shots sampled</dt><dd className="font-mono text-lab-text">{shots.toLocaleString()}</dd></div>}
+        {timingMs !== null && <div><dt className="text-lab-faint">Engine time</dt><dd className="font-mono text-lab-text">{timingMs.toFixed(1)} ms</dd></div>}
         <div><dt className="text-lab-faint">Normalized</dt><dd className="font-mono text-lab-text">{state.normalized ? "yes" : "no"}{typeof state.normalization_error === "number" && <span className="text-lab-faint"> ({state.normalization_error.toExponential(1)})</span>}</dd></div>
         {purity !== null && <div><dt className="text-lab-faint">Purity</dt><dd className="font-mono text-lab-text">{purity.toFixed(4)}</dd></div>}
-        <div className="col-span-2 sm:col-span-1"><dt className="text-lab-faint">Qubit order</dt><dd className="text-lab-muted" title={qubitOrderLabel(state.qubit_order)}>q0 = LSB</dd></div>
+        {amplitudeCount !== null && (
+          <div><dt className="text-lab-faint">Amplitudes</dt><dd className="font-mono text-lab-text">{amplitudeCount.toLocaleString()}{nonzeroCount !== null && <span className="text-lab-faint"> ({nonzeroCount.toLocaleString()} nonzero)</span>}</dd></div>
+        )}
       </dl>
+
+      <p className="text-[10px] leading-4 text-lab-faint">
+        Bit ordering: {qubitOrderLabel(state.qubit_order)}. In a label like |01⟩ the rightmost character is qubit 0.
+      </p>
+
+      {state.representation === "stabilizer_summary" && <StabilizerGenerators state={state} />}
 
       {dirac && (
         <div>
@@ -127,7 +181,62 @@ function OverviewView({ state }: { state: StateAnalysisResponse }) {
   );
 }
 
-function ProbabilitiesView({ state }: { state: StateAnalysisResponse }) {
+function CountsComparison({ state, counts, shots }: { state: StateAnalysisResponse; counts: Record<string, number>; shots: number }) {
+  const rows = useMemo(() => {
+    const exactByBasis = new Map<string, number>();
+    for (const entry of displayEntries(state) ?? []) exactByBasis.set(entry.basis, entry.probability);
+    const bases = new Set<string>([...exactByBasis.keys(), ...Object.keys(counts)]);
+    return [...bases]
+      .map((basis) => {
+        const exact = exactByBasis.get(basis) ?? null;
+        const count = counts[basis] ?? 0;
+        const frequency = shots > 0 ? count / shots : 0;
+        return { basis, exact, count, frequency, delta: exact !== null ? Math.abs(exact - frequency) : null };
+      })
+      .filter((row) => (row.exact ?? 0) > 1e-10 || row.count > 0)
+      .sort((left, right) => (right.exact ?? right.frequency) - (left.exact ?? left.frequency))
+      .slice(0, 24);
+  }, [state, counts, shots]);
+
+  if (rows.length === 0 || rows.every((row) => row.exact === null)) return null;
+
+  return (
+    <div>
+      <p className="instrument-label">Exact probability vs. sampled frequency</p>
+      <p className="mt-1 text-[10px] leading-4 text-lab-faint">
+        The sampled column comes from {shots.toLocaleString()} finite shots of the real measured circuit -- it
+        approaches the exact column only statistically. A nonzero difference here is expected shot noise, not
+        an error.
+      </p>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full min-w-[22rem] border-collapse text-left text-[11px]">
+          <thead>
+            <tr className="border-b border-lab-border text-lab-faint">
+              <th scope="col" className="py-1 pr-3 font-medium">Basis</th>
+              <th scope="col" className="py-1 pr-3 font-medium">Exact</th>
+              <th scope="col" className="py-1 pr-3 font-medium">Sampled count</th>
+              <th scope="col" className="py-1 pr-3 font-medium">Sampled freq.</th>
+              <th scope="col" className="py-1 pr-3 font-medium">|Δ|</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.basis} className="border-b border-lab-border/60">
+                <td className="py-1 pr-3 font-mono text-lab-text">|{row.basis}⟩</td>
+                <td className="py-1 pr-3 font-mono text-lab-muted">{row.exact !== null ? `${(row.exact * 100).toFixed(2)}%` : "—"}</td>
+                <td className="py-1 pr-3 font-mono text-lab-muted">{row.count.toLocaleString()}</td>
+                <td className="py-1 pr-3 font-mono text-lab-muted">{(row.frequency * 100).toFixed(2)}%</td>
+                <td className="py-1 pr-3 font-mono text-lab-faint">{row.delta !== null ? `${(row.delta * 100).toFixed(2)}%` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ProbabilitiesView({ state, counts, shots }: { state: StateAnalysisResponse; counts: Record<string, number> | null; shots: number | null }) {
   const entries = displayEntries(state);
   const marginals = state.per_qubit?.filter((entry) => entry.marginal_probability_1 !== null) ?? [];
 
@@ -138,10 +247,11 @@ function ProbabilitiesView({ state }: { state: StateAnalysisResponse }) {
         shot counts. Compare against the Distribution tab, which shows actual sampled measurement outcomes.
       </Callout>
       {entries && entries.length > 0 ? (
-        <AmplitudeTable entries={entries} maxRows={32} showAmplitude={false} showPhase={false} />
+        <AmplitudeTable entries={entries} showAmplitude={false} showPhase={false} />
       ) : (
         <p className="text-xs text-lab-faint">No per-basis-state probability list is available for this representation.</p>
       )}
+      {counts && shots !== null && shots > 0 && <CountsComparison state={state} counts={counts} shots={shots} />}
       {marginals.length > 0 && (
         <div>
           <p className="instrument-label">Per-qubit marginal probability of |1⟩</p>
@@ -170,7 +280,8 @@ function PhaseWheelLegend() {
       <span className="h-6 w-6 shrink-0 rounded-full border border-lab-border" style={{ backgroundImage: gradient }} aria-hidden="true" />
       <p className="text-[10px] leading-4 text-lab-faint">
         Color is a redundant visual cue for phase (0° = red, wrapping through the hue circle back to 360°) --
-        the exact phase in degrees is always shown numerically alongside it, never color alone.
+        the exact phase in degrees is always shown numerically alongside it, never color alone. Enable the
+        radians column for phase in radians.
       </p>
     </div>
   );
@@ -187,7 +298,7 @@ function PhasesView({ state }: { state: StateAnalysisResponse }) {
   return (
     <div className="space-y-4">
       <PhaseWheelLegend />
-      <AmplitudeTable entries={entries} maxRows={32} showAmplitude />
+      <AmplitudeTable entries={entries} showAmplitude />
       {globalPhaseNote && <Callout tone="info">{globalPhaseNote}</Callout>}
     </div>
   );
@@ -216,8 +327,26 @@ function NotRequestedView() {
   );
 }
 
-export function QuantumStatePanel({ state }: { state: StateAnalysisResponse | null }) {
+export function QuantumStatePanel({
+  state,
+  counts = null,
+  timingMs = null,
+}: {
+  state: StateAnalysisResponse | null;
+  /** Sampled counts from the same run, for the exact-vs-sampled comparison. */
+  counts?: Record<string, number> | null;
+  timingMs?: number | null;
+}) {
   const [view, setView] = useState<StateSubView>("overview");
+
+  const shots = useMemo(() => {
+    if (!counts) return null;
+    let total = 0;
+    for (const key in counts) {
+      if (Object.prototype.hasOwnProperty.call(counts, key)) total += counts[key];
+    }
+    return total;
+  }, [counts]);
 
   const entries = state ? displayEntries(state) : null;
   const hasPhases = (entries ?? []).some((entry) => entry.phase_radians !== null);
@@ -257,8 +386,8 @@ export function QuantumStatePanel({ state }: { state: StateAnalysisResponse | nu
         ))}
       </div>
       <div className="pt-4">
-        {activeView === "overview" && <OverviewView state={state} />}
-        {activeView === "probabilities" && <ProbabilitiesView state={state} />}
+        {activeView === "overview" && <OverviewView state={state} shots={shots} timingMs={timingMs} />}
+        {activeView === "probabilities" && <ProbabilitiesView state={state} counts={counts} shots={shots} />}
         {activeView === "phases" && <PhasesView state={state} />}
         {activeView === "bloch" && <BlochQubitView state={state} />}
         {activeView === "density" && <DensityMatrixView state={state} />}

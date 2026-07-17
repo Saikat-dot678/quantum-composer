@@ -1,19 +1,18 @@
-from typing import Any, Sequence
-
-from schemas import CircuitRequest
+from typing import Protocol, Sequence, TypeVar
 
 
-def ordered_operation_items(operations: Sequence[Any]):
-    """Return ``(input_index, operation)`` pairs in visual moment order."""
-    return sorted(
-        enumerate(operations),
-        key=lambda item: (
-            item[1].moment if item[1].moment is not None else item[0],
-            item[0],
-        ),
-    )
+class MomentOperation(Protocol):
+    moment: int
 
 
-def ordered_operations(request: CircuitRequest):
-    """Return operations in visual moment order while preserving insertion order."""
-    return ordered_operation_items(request.operations)
+OperationT = TypeVar("OperationT", bound=MomentOperation)
+
+
+def canonical_operation_order(operations: Sequence[OperationT]) -> list[OperationT]:
+    """Return a non-mutating, stable numeric-moment ordering.
+
+    Request-schema validation guarantees that every moment is a non-negative,
+    strict integer. Python's sort is stable, so input position is the sole
+    deterministic tie-breaker for legal parallel operations in one moment.
+    """
+    return sorted(operations, key=lambda operation: operation.moment)

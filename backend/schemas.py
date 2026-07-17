@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from visualization.schemas import CircuitDiagramPayload
 
 
 GateName = Literal[
@@ -62,7 +63,7 @@ class CircuitOperation(BaseModel):
     # Visual time-step order. Small for the v1 composer; large structured
     # circuits (deep Clifford/MPS presets) legitimately use many time steps, so
     # the cap is generous. It only affects operation ordering, never resources.
-    moment: int | None = Field(default=None, ge=0, le=1_000_000)
+    moment: int = Field(ge=0, le=1_000_000, strict=True)
     # Only meaningful when gate == "unitary": row-major 2^k x 2^k matrix,
     # each entry a finite [real, imaginary] pair.
     matrix: Optional[list[list[list[float]]]] = None
@@ -170,6 +171,38 @@ class CircuitOperation(BaseModel):
             )
 
 
+def _validate_operation_placement(
+    operations: list[CircuitOperation], num_qubits: int, num_clbits: int
+) -> None:
+    occupied_qubits: set[tuple[int, int]] = set()
+    occupied_clbits: set[tuple[int, int]] = set()
+    for position, operation in enumerate(operations):
+        for qubit in operation.qubits:
+            if qubit >= num_qubits:
+                raise ValueError(
+                    f"operation {position}: qubit {qubit} is outside 0..{num_qubits - 1}"
+                )
+            key = (operation.moment, qubit)
+            if key in occupied_qubits:
+                raise ValueError(
+                    f"operation {position}: qubit {qubit} already has an operation "
+                    f"at moment {operation.moment}"
+                )
+            occupied_qubits.add(key)
+        for clbit in operation.clbits:
+            if clbit >= num_clbits:
+                raise ValueError(
+                    f"operation {position}: classical bit {clbit} is outside 0..{num_clbits - 1}"
+                )
+            key = (operation.moment, clbit)
+            if key in occupied_clbits:
+                raise ValueError(
+                    f"operation {position}: classical bit {clbit} already has an operation "
+                    f"at moment {operation.moment}"
+                )
+            occupied_clbits.add(key)
+
+
 class CircuitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -180,18 +213,7 @@ class CircuitRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_bit_ranges(self) -> "CircuitRequest":
-        for position, operation in enumerate(self.operations):
-            for qubit in operation.qubits:
-                if qubit >= self.num_qubits:
-                    raise ValueError(
-                        f"operation {position}: qubit {qubit} is outside 0..{self.num_qubits - 1}"
-                    )
-            for clbit in operation.clbits:
-                if clbit >= self.num_clbits:
-                    upper = self.num_clbits - 1
-                    raise ValueError(
-                        f"operation {position}: classical bit {clbit} is outside 0..{upper}"
-                    )
+        _validate_operation_placement(self.operations, self.num_qubits, self.num_clbits)
         return self
 
 
@@ -214,6 +236,7 @@ class SimulationResponse(BaseModel):
     depth: int
     gate_counts: dict[str, int]
     diagram: str
+    circuit_diagram: Optional[CircuitDiagramPayload] = None
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -278,20 +301,7 @@ class AdvancedCircuitRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_bit_ranges(self) -> "AdvancedCircuitRequest":
-        for position, operation in enumerate(self.operations):
-            for qubit in operation.qubits:
-                if qubit >= self.num_qubits:
-                    raise ValueError(
-                        f"operation {position}: qubit {qubit} is outside "
-                        f"0..{self.num_qubits - 1}"
-                    )
-            for clbit in operation.clbits:
-                if clbit >= self.num_clbits:
-                    upper = self.num_clbits - 1
-                    raise ValueError(
-                        f"operation {position}: classical bit {clbit} is outside "
-                        f"0..{upper}"
-                    )
+        _validate_operation_placement(self.operations, self.num_qubits, self.num_clbits)
         return self
 
 
@@ -398,6 +408,7 @@ class PerQubitState(BaseModel):
     probability_1: float
     is_mixed: bool
     marginal_probability_1: Optional[float] = None
+    reduced_density_matrix: list[list[ComplexNumber]]
 
 
 class BipartitionEntanglement(BaseModel):
@@ -455,6 +466,7 @@ class SimulationV2Response(BaseModel):
     resource_estimate: dict[str, Any]
     timing_ms: float
     diagram: Optional[str] = None
+    circuit_diagram: Optional[CircuitDiagramPayload] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     state_analysis: Optional[StateAnalysisResponse] = None
 

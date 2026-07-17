@@ -14,6 +14,7 @@ import {
   type CustomDefinition,
   type DecompositionStep,
 } from "./customGates";
+import { canonicalOperationOrder } from "./circuitOrdering";
 
 function formatComplex(pair: ComplexPair): string {
   const [re, im] = pair;
@@ -76,9 +77,7 @@ function decompositionPreview(definition: Extract<CustomDefinition, { kind: "dec
   const params = definition.kind === "decomposition"
     ? definition.parameters.map((p) => `${p.name}=${Number.isInteger(p.default) ? p.default : p.default.toFixed(4)}`).join(", ")
     : "";
-  const steps = definition.steps
-    .slice()
-    .sort((a, b) => a.moment - b.moment || Math.min(...a.qubits, 0) - Math.min(...b.qubits, 0))
+  const steps = canonicalOperationOrder(definition.steps)
     .map((step) => stepLine(step, library))
     .join("\n");
   return [

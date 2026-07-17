@@ -19,13 +19,13 @@ Statevector memory, concretely:
 
 | Qubits | Statevector memory |
 | ------ | ------------------ |
-| 20     | 16 MB              |
-| 30     | 16 GB              |
-| 32     | 64 GB              |
-| 35     | 512 GB             |
-| 40     | 16 TB              |
-| 50     | 16 PB              |
-| 100    | ~2 × 10¹⁶ PB (impossible) |
+| 20     | 16 MiB             |
+| 30     | 16 GiB             |
+| 32     | 64 GiB             |
+| 35     | 512 GiB            |
+| 40     | 16 TiB             |
+| 50     | 16 PiB             |
+| 100    | ~2 × 10¹⁶ PiB (impossible) |
 
 Density matrices are exponentially *worse* (`4**n`), which is why noisy
 simulation is limited to very few qubits.
@@ -77,11 +77,19 @@ whatever noise the device has. "IBM runs 100 qubits" and "a laptop simulates 100
 qubits" are fundamentally different claims. Classical simulation must store or
 approximate the state; hardware simply *is* the state.
 
+Quantum Composer's **Hardware Mapping** workspace can discover account-scoped
+IBM targets and installed fake snapshots, or build generic/manual targets, then
+transpile and visualize the logical-to-physical mapping. Mapping is not
+execution: the project has no QPU submission or job-result endpoint. A future
+execution result would contain finite-shot measurements, not an arbitrary
+statevector for the post-processing viewer. See
+[HARDWARE_MAPPING.md](HARDWARE_MAPPING.md).
+
 ## The engines
 
 | Engine              | Method                | Good for                         | Hard limit / caveat |
 | ------------------- | --------------------- | -------------------------------- | ------------------- |
-| `aer_statevector`   | exact statevector     | small arbitrary (universal)      | capped at 30 qubits (16 GB) |
+| `aer_statevector`   | exact statevector     | small arbitrary (universal)      | capped at 30 qubits (16 GiB) |
 | `aer_mps`           | matrix product state  | large low-entanglement circuits  | potentially approximate; bond dimension can explode |
 | `aer_stabilizer`    | stabilizer            | large Clifford-only circuits     | rejects non-Clifford gates |
 | `aer_density_matrix`| density matrix        | small **noisy** circuits         | capped at 15 qubits (`16·4^n`) |
@@ -129,8 +137,8 @@ the configured memory budget:
 - **dangerous** — at or above the budget (up to ~8×).
 - **infeasible** — far beyond the budget.
 
-`POST /circuit/analyze` uses a 1024 MB reference budget. A V2 simulation uses
-the request's `max_memory_mb` value (16–65,536 MB), so the two calls can return
+`POST /circuit/analyze` uses a 1,024 MiB reference budget. A V2 simulation uses
+the request's `max_memory_mb` value (16–65,536 MiB), so the two calls can return
 different labels. Neither value certifies that the host currently has that much
 free memory. The exact-engine caps still allow allocations around 16 GiB at
 30 statevector qubits or 15 density-matrix qubits.
@@ -175,12 +183,11 @@ statevector engine's own state extraction does; above that, the response
 says so (`unavailable_reason`) instead of attempting the conversion.
 
 **Visualization limits, separately from either of the above:** even inside a
-payload that the backend is willing to return, the frontend never renders an
-unbounded amplitude table or an unbounded density-matrix grid. Amplitude/
-probability tables cap the number of rendered rows with a "+N more, use the
-export" footer; the density-matrix heatmap only renders as a grid up to 16×16
-cells (4 qubits) and otherwise points at the JSON/CSV export instead of
-building thousands of DOM cells.
+payload that the backend is willing to return, the frontend never mounts an
+unbounded amplitude table or density-matrix grid. Amplitude/probability rows
+are windowed/virtualized with search and zero filtering; the density-matrix
+heatmap only renders as a grid up to 16×16 cells (4 qubits) and otherwise points
+at the JSON export instead of building thousands of DOM cells.
 
 ## When to use which engine
 
@@ -188,6 +195,12 @@ building thousands of DOM cells.
   (or `auto`).
 - Error-correction codes, randomized benchmarking, large entangling Clifford
   circuits → **stabilizer** (`stim` for the biggest).
+
+All successful engine routes attempt the same graphical circuit rendering after
+execution. This is Qiskit's Matplotlib drawer serialized as base64 SVG, not an
+engine-specific state visualization. Diagram limits are independent of engine
+feasibility: a large Clifford or MPS circuit can complete while its graphical
+diagram is safely omitted. See [CIRCUIT_DIAGRAMS.md](CIRCUIT_DIAGRAMS.md).
 - Long, shallow, low-entanglement or nearest-neighbour circuits with many qubits
   → **MPS**. Enable “allow approximation” to let `auto` choose MPS after exact
   simulation becomes infeasible; explicit truncation/bond limits control whether

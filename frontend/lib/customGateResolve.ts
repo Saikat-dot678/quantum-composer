@@ -7,14 +7,10 @@
 // composite definitions never reach the backend as anything but their
 // expansion; only matrix definitions introduce the one new "unitary" gate.
 //
-// Two passes: (1) walk the circuit's operations in execution order, expanding
-// every custom instance into a flat, order-preserving instruction list
-// (recursing into nested custom:<id> references); (2) schedule that flat list
-// with a greedy "as soon as possible" per-wire scheduler so every instruction
-// lands on a valid, collision-free moment. Moment numbers in the resolved
-// circuit are synthetic — this circuit is never shown on the visual canvas,
-// only sent to the backend or the local preview, so only relative order
-// matters, not alignment with the editable circuit's own timeline.
+// Two passes: (1) walk the circuit in canonical visual-moment order and expand
+// custom instances recursively; (2) assign synthetic integer moments from the
+// parent moment plus the nested local timeline. Parent chronology is never
+// changed, even when unrelated wires would otherwise be free earlier.
 import {
   MAX_DECOMPOSITION_DEPTH,
   MAX_EXPANDED_OPERATIONS,
@@ -26,6 +22,7 @@ import {
   type CustomDefinition,
 } from "./customGates";
 import type { BuiltinGateName, CircuitData, CircuitOperation } from "./types";
+import { canonicalOperationOrder } from "./circuitOrdering";
 
 export type ResolvedOperation =
   | { gate: BuiltinGateName; qubits: number[]; clbits: number[]; params: Record<string, number>; moment: number }
@@ -51,6 +48,8 @@ interface FlatInstruction {
   params: Record<string, number>;
   matrix?: ComplexPair[][];
   label?: string;
+  parentMoment: number;
+  localTimeline: number[];
 }
 
 interface InstanceLike {
@@ -73,13 +72,18 @@ function expandInstance(
   library: ReadonlyMap<string, CustomDefinition>,
   depth: number,
   out: FlatInstruction[],
+  parentMoment: number,
+  localPrefix: number[],
 ): { ok: true } | { ok: false; reason: string } {
   if (depth > MAX_DECOMPOSITION_DEPTH) {
     return { ok: false, reason: `"${definition.name}" nests more than ${MAX_DECOMPOSITION_DEPTH} levels deep — refusing to expand further.` };
   }
 
   if (isMatrixDefinition(definition)) {
-    out.push({ gate: "unitary", qubits: instance.qubits, clbits: [], params: {}, matrix: definition.matrix, label: definition.label });
+    out.push({
+      gate: "unitary", qubits: instance.qubits, clbits: [], params: {}, matrix: definition.matrix, label: definition.label,
+      parentMoment, localTimeline: localPrefix.length ? localPrefix : [0],
+    });
     return out.length > MAX_EXPANDED_OPERATIONS
       ? { ok: false, reason: `This circuit expands to more than ${MAX_EXPANDED_OPERATIONS.toLocaleString()} operations once custom gates are flattened.` }
       : { ok: true };
@@ -96,9 +100,10 @@ function expandInstance(
   // Steps carry their own local timeline (definition.steps[i].moment) — sort
   // by that (tie-broken by lowest local qubit) so expansion preserves the
   // definition's own internal ordering regardless of insertion order in storage.
-  const steps = [...definition.steps].sort((a, b) => a.moment - b.moment || Math.min(...a.qubits, 0) - Math.min(...b.qubits, 0));
+  const steps = canonicalOperationOrder(definition.steps);
 
   for (const step of steps) {
+    const localTimeline = [...localPrefix, step.moment];
     const stepQubits = step.qubits.map((local) => instance.qubits[local]);
     const stepClbits = step.clbits.map((local) => instance.clbits[local]);
     if (stepQubits.some((q) => q === undefined) || stepClbits.some((c) => c === undefined)) {
@@ -115,10 +120,16 @@ function expandInstance(
     if (nestedId !== null) {
       const nestedDefinition = library.get(nestedId);
       if (!nestedDefinition) return { ok: false, reason: `"${definition.name}" references a custom gate that no longer exists in the library ("${nestedId}").` };
-      const result = expandInstance({ qubits: stepQubits, clbits: stepClbits, params: stepParams }, nestedDefinition, library, depth + 1, out);
+      const result = expandInstance(
+        { qubits: stepQubits, clbits: stepClbits, params: stepParams }, nestedDefinition,
+        library, depth + 1, out, parentMoment, localTimeline,
+      );
       if (!result.ok) return result;
     } else {
-      out.push({ gate: step.gate as BuiltinGateName, qubits: stepQubits, clbits: stepClbits, params: stepParams });
+      out.push({
+        gate: step.gate as BuiltinGateName, qubits: stepQubits, clbits: stepClbits, params: stepParams,
+        parentMoment, localTimeline,
+      });
     }
     if (out.length > MAX_EXPANDED_OPERATIONS) {
       return { ok: false, reason: `This circuit expands to more than ${MAX_EXPANDED_OPERATIONS.toLocaleString()} operations once custom gates are flattened.` };
@@ -127,17 +138,35 @@ function expandInstance(
   return { ok: true };
 }
 
-/** Greedy "as soon as possible" list scheduler: each instruction lands on the first moment after every operand (qubit or clbit) it touches is free. Deterministic, collision-free by construction. */
+function compareTimeline(left: number[], right: number[]): number {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return left.length - right.length;
+}
+
+/**
+ * Assign integer moments from (parent moment, nested local timeline). A custom
+ * expansion is a chronology block, so it cannot cross a measurement, barrier,
+ * or any other operation from an earlier/later visual moment.
+ */
 function scheduleFlat(instructions: FlatInstruction[]): ResolvedOperation[] {
-  const nextFreeQubit = new Map<number, number>();
-  const nextFreeClbit = new Map<number, number>();
+  const ordered = [...instructions].sort((left, right) =>
+    left.parentMoment - right.parentMoment || compareTimeline(left.localTimeline, right.localTimeline));
   const resolved: ResolvedOperation[] = [];
-  for (const instruction of instructions) {
-    let moment = 0;
-    for (const qubit of instruction.qubits) moment = Math.max(moment, nextFreeQubit.get(qubit) ?? 0);
-    for (const clbit of instruction.clbits) moment = Math.max(moment, nextFreeClbit.get(clbit) ?? 0);
-    for (const qubit of instruction.qubits) nextFreeQubit.set(qubit, moment + 1);
-    for (const clbit of instruction.clbits) nextFreeClbit.set(clbit, moment + 1);
+  let activeParent: number | null = null;
+  let activeTimeline: number[] | null = null;
+  let moment = -1;
+  for (const instruction of ordered) {
+    if (instruction.parentMoment !== activeParent) {
+      activeParent = instruction.parentMoment;
+      activeTimeline = instruction.localTimeline;
+      moment = Math.max(instruction.parentMoment, moment + 1);
+    } else if (activeTimeline === null || compareTimeline(instruction.localTimeline, activeTimeline) !== 0) {
+      activeTimeline = instruction.localTimeline;
+      moment += 1;
+    }
     resolved.push(
       instruction.gate === "unitary"
         ? { gate: "unitary", qubits: instruction.qubits, clbits: instruction.clbits, params: instruction.params, moment, matrix: instruction.matrix!, label: instruction.label ?? "U" }
@@ -156,12 +185,38 @@ function scheduleFlat(instructions: FlatInstruction[]): ResolvedOperation[] {
  * like any other pre-flight validation error in this app.
  */
 export function resolveCustomOperations(circuit: CircuitData, library: ReadonlyMap<string, CustomDefinition>): ResolveResult {
-  const ordered = [...circuit.operations].sort((a, b) => a.moment - b.moment || Math.min(...a.qubits, 0) - Math.min(...b.qubits, 0));
+  const ordered = canonicalOperationOrder(circuit.operations);
   const flat: FlatInstruction[] = [];
 
   for (const operation of ordered) {
+    if (operation.gate === "unitary") {
+      if (!operation.matrix) {
+        return {
+          ok: false,
+          reason: `The resolved unitary operation at time ${operation.moment} is missing its matrix. Reload the source circuit before continuing.`,
+        };
+      }
+      flat.push({
+        gate: "unitary",
+        qubits: operation.qubits,
+        clbits: operation.clbits,
+        params: operation.params,
+        matrix: operation.matrix,
+        label: operation.label,
+        parentMoment: operation.moment,
+        localTimeline: [0],
+      });
+      continue;
+    }
     if (operation.gate !== "custom") {
-      flat.push({ gate: operation.gate, qubits: operation.qubits, clbits: operation.clbits, params: operation.params });
+      flat.push({
+        gate: operation.gate,
+        qubits: operation.qubits,
+        clbits: operation.clbits,
+        params: operation.params,
+        parentMoment: operation.moment,
+        localTimeline: [0],
+      });
       continue;
     }
     const definition = operation.customId ? library.get(operation.customId) : undefined;
@@ -179,7 +234,7 @@ export function resolveCustomOperations(circuit: CircuitData, library: ReadonlyM
         reason: `"${definition.name}" expects ${expectedQubits} qubit(s) and ${expectedClbits} classical bit(s), but the placed instance at time ${operation.moment} has ${operation.qubits.length} and ${operation.clbits.length}.`,
       };
     }
-    const result = expandInstance(operation, definition, library, 1, flat);
+    const result = expandInstance(operation, definition, library, 1, flat, operation.moment, []);
     if (!result.ok) return { ok: false, reason: result.reason };
   }
 

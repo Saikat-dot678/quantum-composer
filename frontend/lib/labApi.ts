@@ -11,13 +11,14 @@ import type {
   SimulationV2Response,
 } from "./labTypes";
 import { apiPost, apiRequest, type HealthResponse } from "./apiClient";
+import { canonicalizeCircuit } from "./circuitOrdering";
 
 export const labApi = {
   health: () => apiRequest<HealthResponse>("/health", {}, 3500),
   engines: () => apiRequest<EnginesResponse>("/engines", {}, 8000),
-  analyze: (circuit: CircuitData) => apiPost<CircuitAnalysis>("/circuit/analyze", circuit),
+  analyze: (circuit: CircuitData) => apiPost<CircuitAnalysis>("/circuit/analyze", canonicalizeCircuit(circuit)),
   simulateV2: (circuit: CircuitData, options: SimulationOptions) =>
-    apiPost<SimulationV2Response>("/circuit/simulate-v2", { circuit, options }),
+    apiPost<SimulationV2Response>("/circuit/simulate-v2", { circuit: canonicalizeCircuit(circuit), options }),
   bb84: (body: {
     num_bits: number;
     eve_enabled: boolean;

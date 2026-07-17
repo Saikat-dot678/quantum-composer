@@ -80,6 +80,47 @@ describe("resolveCustomOperations: pass-through", () => {
     expect(result.circuit?.operations[0]).toMatchObject({ gate: "h", qubits: [0] });
     expect(result.circuit?.operations[1]).toMatchObject({ gate: "cx", qubits: [0, 1] });
   });
+
+  it("does not move terminal measurements ahead of later-moment CX gates", () => {
+    const circuit = circuitWith([
+      { gate: "measure", qubits: [1], clbits: [1], params: {}, moment: 5 },
+      { gate: "cx", qubits: [0, 3], clbits: [], params: {}, moment: 3 },
+      { gate: "h", qubits: [0], clbits: [], params: {}, moment: 0 },
+      { gate: "measure", qubits: [0], clbits: [0], params: {}, moment: 4 },
+      { gate: "cx", qubits: [0, 1], clbits: [], params: {}, moment: 1 },
+      { gate: "measure", qubits: [3], clbits: [3], params: {}, moment: 7 },
+      { gate: "cx", qubits: [0, 2], clbits: [], params: {}, moment: 2 },
+      { gate: "measure", qubits: [2], clbits: [2], params: {}, moment: 6 },
+    ], 4, 4);
+    const result = resolveCustomOperations(circuit, new Map());
+    expect(result.circuit?.operations.map((operation) => operation.gate)).toEqual([
+      "h", "cx", "cx", "cx", "measure", "measure", "measure", "measure",
+    ]);
+    expect(result.circuit?.operations.map((operation) => operation.moment)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("is idempotent for an already-resolved unitary operation", () => {
+    const circuit = circuitWith([{
+      gate: "unitary",
+      qubits: [0],
+      clbits: [],
+      params: {},
+      moment: 3,
+      matrix: PAULI_X,
+      label: "PX",
+    }]);
+    const result = resolveCustomOperations(circuit, new Map());
+    expect(result.ok).toBe(true);
+    expect(result.circuit?.operations[0]).toEqual({
+      gate: "unitary",
+      qubits: [0],
+      clbits: [],
+      params: {},
+      moment: 3,
+      matrix: PAULI_X,
+      label: "PX",
+    });
+  });
 });
 
 describe("resolveCustomOperations: matrix gates", () => {

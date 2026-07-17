@@ -6,7 +6,7 @@
 // already-computed. Keeping it this way means the frontend and backend can
 // never silently disagree about a physics result -- only about how it's
 // displayed.
-import type { AmplitudeEntry, ComplexNumber, StateAnalysisResponse, StateSemanticPoint } from "./labTypes";
+import type { AmplitudeEntry, BlochVectorXYZ, ComplexNumber, StateAnalysisResponse, StateSemanticPoint } from "./labTypes";
 
 export function formatComplex(value: ComplexNumber, digits = 4): string {
   const re = Number(value.re.toFixed(digits));
@@ -82,6 +82,7 @@ export function diracNotation(entries: AmplitudeEntry[], maxTerms = 6): string {
 }
 
 export function isApproximate(state: StateAnalysisResponse): boolean {
+  if (typeof state.global_metrics?.exact === "boolean") return !state.global_metrics.exact;
   return state.warnings.some((warning) => /approximat/i.test(warning));
 }
 
@@ -93,6 +94,39 @@ export function complexMagnitude(value: ComplexNumber): number {
 export function magnitudeToHeatmapColor(magnitude: number): string {
   const clamped = Math.max(0, Math.min(1, magnitude));
   return `hsl(190, 70%, ${92 - clamped * 55}%)`;
+}
+
+/** Signed heatmap cell color for real/imaginary parts: negative -> amber, positive -> teal, 0 -> near-white. `value` is expected in [-1, 1] (density-matrix entries are); clamped defensively. */
+export function signedToHeatmapColor(value: number): string {
+  const clamped = Math.max(-1, Math.min(1, value));
+  const intensity = Math.abs(clamped);
+  return clamped >= 0
+    ? `hsl(190, 70%, ${92 - intensity * 55}%)`
+    : `hsl(35, 80%, ${92 - intensity * 47}%)`;
+}
+
+/**
+ * Nearest canonical single-qubit state within tolerance, from a reduced
+ * state's Bloch vector -- a display label only, never used in any
+ * calculation. Returns null when no canonical state is close enough (so the
+ * UI shows nothing rather than a wrong name). "Maximally mixed" needs the
+ * vector near the origin.
+ */
+export function recognizedStateLabel(bloch: BlochVectorXYZ, tolerance = 0.02): string | null {
+  const named: Array<{ label: string; x: number; y: number; z: number }> = [
+    { label: "|0⟩", x: 0, y: 0, z: 1 },
+    { label: "|1⟩", x: 0, y: 0, z: -1 },
+    { label: "|+⟩", x: 1, y: 0, z: 0 },
+    { label: "|−⟩", x: -1, y: 0, z: 0 },
+    { label: "|+i⟩", x: 0, y: 1, z: 0 },
+    { label: "|−i⟩", x: 0, y: -1, z: 0 },
+    { label: "maximally mixed", x: 0, y: 0, z: 0 },
+  ];
+  for (const state of named) {
+    const distance = Math.hypot(bloch.x - state.x, bloch.y - state.y, bloch.z - state.z);
+    if (distance <= tolerance) return state.label;
+  }
+  return null;
 }
 
 export function complexPhaseRadians(value: ComplexNumber): number {

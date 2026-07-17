@@ -57,9 +57,9 @@ def prepare_circuit(request: Any) -> tuple[Any, list[str]]:
 
 
 def analyze_measurement_structure(operations: Sequence[Any]) -> dict[str, Any]:
-    from validators import ordered_operation_items
+    from validators import canonical_operation_order
 
-    ordered = [operation for _, operation in ordered_operation_items(list(operations))]
+    ordered = canonical_operation_order(list(operations))
     measured_qubits: set[int] = set()
     mid_circuit = False
     for operation in ordered:

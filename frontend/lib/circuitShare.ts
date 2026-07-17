@@ -7,6 +7,7 @@ import {
 } from "./customGates";
 import { normalizeCustomDefinition, validateDefinition } from "./customGateValidation";
 import { LIMITS } from "./constants";
+import { canonicalOperationOrder } from "./circuitOrdering";
 import type { CircuitData, CircuitOperation, GateName } from "./types";
 
 const GATES = ["x", "y", "z", "h", "s", "t", "rx", "ry", "rz", "cx", "cz", "swap", "measure", "barrier"] as const;
@@ -151,7 +152,8 @@ export function validateCircuitData(parsed: unknown, options: CircuitValidationO
   if (!Array.isArray(parsed.operations) || parsed.operations.length > maxOperations) return null;
 
   const operations: CircuitOperation[] = [];
-  const occupied = new Set<string>();
+  const occupiedQubits = new Set<string>();
+  const occupiedClbits = new Set<string>();
   for (const rawOperation of parsed.operations) {
     const operation = normalizeOperation(rawOperation, maxMoment);
     if (!operation) return null;
@@ -159,8 +161,13 @@ export function validateCircuitData(parsed: unknown, options: CircuitValidationO
     if (operation.clbits.some((clbit) => clbit >= (parsed.num_clbits as number))) return null;
     for (const qubit of operation.qubits) {
       const key = `${operation.moment}:${qubit}`;
-      if (occupied.has(key)) return null;
-      occupied.add(key);
+      if (occupiedQubits.has(key)) return null;
+      occupiedQubits.add(key);
+    }
+    for (const clbit of operation.clbits) {
+      const key = `${operation.moment}:${clbit}`;
+      if (occupiedClbits.has(key)) return null;
+      occupiedClbits.add(key);
     }
     operations.push(operation);
   }
@@ -169,7 +176,7 @@ export function validateCircuitData(parsed: unknown, options: CircuitValidationO
     num_qubits: parsed.num_qubits as number,
     num_clbits: parsed.num_clbits as number,
     shots: parsed.shots as number,
-    operations,
+    operations: canonicalOperationOrder(operations),
   };
 }
 

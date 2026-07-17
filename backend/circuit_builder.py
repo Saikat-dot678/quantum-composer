@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from schemas import CircuitOperation, CircuitRequest
-from validators import ordered_operation_items, ordered_operations
+from validators import canonical_operation_order
 
 
 class QuantumDependencyError(RuntimeError):
@@ -55,7 +55,7 @@ def apply_operations(circuit: Any, operations: Sequence[CircuitOperation]) -> No
 def build_circuit(request: CircuitRequest) -> Any:
     QuantumCircuit = _load_quantum_circuit()
     circuit = QuantumCircuit(request.num_qubits, request.num_clbits)
-    apply_operations(circuit, [operation for _, operation in ordered_operations(request)])
+    apply_operations(circuit, canonical_operation_order(request.operations))
     return circuit
 
 
@@ -70,4 +70,4 @@ def empty_circuit(num_qubits: int, num_clbits: int) -> Any:
 def ordered_operation_list(request: Any) -> list[CircuitOperation]:
     """`request.operations` in the same visual-moment execution order
     `build_circuit` uses, without needing a full CircuitRequest re-validation."""
-    return [operation for _, operation in ordered_operation_items(request.operations)]
+    return canonical_operation_order(request.operations)

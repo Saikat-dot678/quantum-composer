@@ -23,7 +23,7 @@ from engines.base import (
     UnsupportedGateError,
     stim_available,
 )
-from validators import ordered_operation_items, ordered_operations
+from validators import canonical_operation_order
 
 ENGINE_ID = "stim_stabilizer"
 
@@ -83,7 +83,7 @@ def _stabilizer_generators(operations: Any, num_qubits: int) -> list[str]:
     stim = _load_stim()
     sim = stim.TableauSimulator()
     tableau_circuit = stim.Circuit()
-    for _, op in ordered_operation_items(list(operations)):
+    for op in canonical_operation_order(list(operations)):
         if op.gate in _STIM_GATES:
             tableau_circuit.append(_STIM_GATES[op.gate], list(op.qubits))
         # measure/barrier are meaningless to a tableau simulator; skipped.
@@ -120,7 +120,7 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
     has_explicit_measure = any(op.gate == "measure" for op in request.operations)
     warnings: list[str] = []
 
-    for _, op in ordered_operations(request):
+    for op in canonical_operation_order(request.operations):
         gate = op.gate
         if gate in _STIM_GATES:
             circuit.append(_STIM_GATES[gate], list(op.qubits))

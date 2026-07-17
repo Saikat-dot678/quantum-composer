@@ -223,6 +223,10 @@ def test_statevector_analysis_bell_state_full_detail():
     assert len(result["amplitudes"]) == 4
     assert result["per_qubit"][0]["purity"] == pytest.approx(0.5, abs=1e-9)
     assert result["per_qubit"][1]["purity"] == pytest.approx(0.5, abs=1e-9)
+    assert result["per_qubit"][0]["reduced_density_matrix"] == [
+        [{"re": pytest.approx(0.5), "im": 0.0}, {"re": 0.0, "im": 0.0}],
+        [{"re": 0.0, "im": 0.0}, {"re": pytest.approx(0.5), "im": 0.0}],
+    ]
     assert result["entanglement"]["concurrence"] == pytest.approx(1.0, abs=1e-9)
     assert result["global_metrics"]["is_pure"] is True
 
@@ -280,6 +284,7 @@ def test_density_matrix_analysis_pure_state_reports_purity_one():
     assert result["available"] is True
     assert result["global_metrics"]["purity"] == pytest.approx(1.0, abs=1e-9)
     assert result["global_metrics"]["is_pure"] is True
+    assert result["global_metrics"]["eigenvalues"][:2] == pytest.approx([1.0, 0.0], abs=1e-9)
     assert result["density_matrix"] is not None
     assert len(result["density_matrix"]) == 4
 

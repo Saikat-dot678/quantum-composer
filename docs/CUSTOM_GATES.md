@@ -244,22 +244,40 @@ are therefore identical to what a built-in circuit containing an equivalent
 test that sends a `unitary` operation built from an explicit Pauli-X matrix
 alongside `h`/`cx` and requests full state analysis.
 
-**A pre-existing gap in the Composer → Simulator Lab handoff was found while
-verifying this end-to-end through the real UI**, not introduced by state
-analysis. `ComposerMode.tsx`'s `openSimulatorLab()` correctly resolves the
-circuit before handing it off (confirmed directly: logging the resolved
-circuit's gate list at the moment of the click shows `["unitary"]` as
-expected), but by the time Simulator Lab actually sends its
-`/circuit/simulate-v2` request, the circuit it holds can revert to the raw,
-unresolved `"custom"` operation — which the backend correctly rejects (422)
-rather than silently producing a wrong result. Two targeted fixes to the
-one-shot `labCircuit` handoff in `app/simulator/page.tsx` were tried and
-reverted after neither resolved it empirically; the likely cause is a timing
-interaction in the client-side route transition deeper than a component-level
-fix reached in this pass (see `audit.md`'s "Custom-gate integration" section
-for the full investigation). Every other path — including a circuit with no
-custom gates, or state analysis running directly against a resolved circuit
-via the API — is unaffected.
+The Composer → Simulator Lab handoff retains its explicitly resolved snapshot
+instead of allowing the live-workspace synchronization effect to replace it
+with the raw custom block. A Playwright regression records both the analysis and
+simulation request bodies and verifies that the matrix example arrives as a
+`unitary` with its matrix/label and produces a backend state-analysis result.
+The user can still select **Follow live Composer** to resume synchronization.
+
+## Hardware Mapping compatibility
+
+Hardware Mapping uses the same resolver before any target call:
+
+- decomposition/composite definitions flatten recursively while preserving
+  logical operand order;
+- matrix definitions become validated `UnitaryGate` operations and Qiskit's
+  target-aware synthesis translates them into supported basis instructions;
+- missing definitions, cycles, operand mismatches, invalid matrices, or target
+  synthesis failures stop the workflow with the actual reason;
+- custom labels never determine gate semantics or Clifford classification.
+
+Custom resolution uses the same stable numeric parent-moment ordering as normal
+circuits. Decomposition steps use their own stable numeric local moments, and
+nested steps form a deterministic local timeline. The resolved integer moments
+are synthetic when expansion needs multiple steps, but each parent operation is
+an indivisible chronology block: expansion cannot cross an earlier/later parent
+operation, measurement, or barrier. The former per-wire "as soon as possible"
+rescheduler was removed because it could move terminal measurements ahead of
+later gates on other wires.
+
+The current Composer circuit and self-contained exported JSON bundles are both
+supported. A browser regression creates and places the matrix example, opens
+Hardware Mapping, confirms the explicit “resolved and flattened” notice, and
+successfully transpiles it. Backend tests separately cover target synthesis and
+the decomposition-equivalent built-in circuit path. See
+[HARDWARE_MAPPING.md](HARDWARE_MAPPING.md).
 
 ## Safety summary
 
@@ -289,11 +307,6 @@ via the API — is unaffected.
   selection on the canvas.
 - Legacy uncompressed share links (`?c=`) do not bundle custom gate
   definitions.
-- Simulator Lab (the separate large/generated-circuit analysis mode) has no
-  custom-gate concept of its own; "Open in Simulator Lab" hands it the
-  already-resolved (flattened) circuit rather than an unrenderable custom
-  block. **A timing gap in that handoff** can cause the raw, unresolved
-  circuit to reach the backend instead (an honest 422 rejection, not a wrong
-  result) — discovered while integrating post-simulation state analysis, not
-  fixed in that pass; see "Post-simulation state analysis" above and
-  `audit.md` for the investigation.
+- Simulator Lab and Hardware Mapping render resolved operations rather than a
+  custom block. The collapsed custom instance remains the Composer/project
+  source of truth; each explicit handoff is a flattened execution snapshot.

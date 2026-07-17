@@ -13,7 +13,7 @@ import math
 from typing import Any, Iterable
 
 from analysis.resource_estimator import estimate_resources, feasibility_from_log2_bytes
-from validators import ordered_operation_items
+from validators import canonical_operation_order
 
 # Gates that are always Clifford in our gate set.
 _CLIFFORD_GATES = {"x", "y", "z", "h", "s", "cx", "cz", "swap"}
@@ -103,7 +103,7 @@ def analyze_circuit(
     # Execution and code generation stable-sort by visual ``moment``. Analyze the
     # same semantic order so an imported/out-of-order operation list cannot
     # report a depth for a different circuit than the one the engines execute.
-    ordered = [operation for _, operation in ordered_operation_items(operations)]
+    ordered = canonical_operation_order(operations)
     depth = _greedy_depth(ordered, num_qubits)
     resources = estimate_resources(num_qubits, max_memory_mb=max_memory_mb)
     sv_risk = feasibility_from_log2_bytes(

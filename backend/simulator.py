@@ -4,6 +4,7 @@ from typing import Any
 
 from circuit_builder import QuantumDependencyError, build_circuit
 from schemas import CircuitRequest
+from visualization.circuit_renderer import render_circuit_diagram
 
 
 def _load_aer_simulator():
@@ -33,11 +34,15 @@ def simulate(request: CircuitRequest) -> dict[str, Any]:
     result = simulator.run(simulation_circuit, shots=request.shots).result()
     raw_counts = result.get_counts(simulation_circuit)
     counts = {str(state): int(count) for state, count in raw_counts.items()}
+    rendered = render_circuit_diagram(circuit)
+    if rendered.warning:
+        warnings.append(rendered.warning)
 
     return {
         "counts": counts,
         "depth": int(circuit.depth() or 0),
         "gate_counts": {name: int(count) for name, count in circuit.count_ops().items()},
         "diagram": str(circuit.draw(output="text")),
+        "circuit_diagram": rendered.payload,
         "warnings": warnings,
     }

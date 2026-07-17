@@ -1,5 +1,6 @@
 // Types for the Simulator Lab (multi-engine) and Cryptography Lab APIs.
 import type { CircuitData } from "./types";
+import type { CircuitDiagramPayload } from "./circuitDiagram";
 
 export type EngineId =
   | "auto"
@@ -147,6 +148,7 @@ export interface PerQubitState {
   probability_1: number;
   is_mixed: boolean;
   marginal_probability_1: number | null;
+  reduced_density_matrix: ComplexNumber[][];
 }
 
 export interface BipartitionEntanglement {
@@ -198,6 +200,7 @@ export interface SimulationV2Response {
   resource_estimate: ResourceEstimate;
   timing_ms: number;
   diagram: string | null;
+  circuit_diagram: CircuitDiagramPayload | null;
   metadata: Record<string, unknown>;
   state_analysis: StateAnalysisResponse | null;
 }

@@ -19,6 +19,7 @@ from engines.base import (
 from engines.crypto_protocols import get_runner
 from engines.router import available_engines
 from engines.router import simulate as route_simulation
+from hardware.routes import router as hardware_router
 from schemas import (
     AdvancedCircuitRequest,
     BB84Request,
@@ -83,6 +84,8 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+
+app.include_router(hardware_router)
 
 
 # ---------------------------------------------------------------------------

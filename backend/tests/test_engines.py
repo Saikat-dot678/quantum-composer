@@ -1,5 +1,6 @@
 """Tests for the engine router and individual simulation engines."""
 
+import base64
 import math
 
 import pytest
@@ -64,7 +65,9 @@ def test_auto_selects_statevector_for_small_non_clifford():
     }
     response = _simulate(circuit, engine="auto", shots=200, seed=2)
     assert response.status_code == 200
-    assert response.json()["selected_engine"] == "aer_statevector"
+    payload = response.json()
+    assert payload["selected_engine"] == "aer_statevector"
+    assert b"<svg" in base64.b64decode(payload["circuit_diagram"]["content"])[:1024]
 
 
 def test_large_arbitrary_non_clifford_is_rejected_safely():
@@ -167,7 +170,7 @@ def test_auto_avoids_stim_for_clifford_angle_rotation(monkeypatch):
         num_qubits=50,
         num_clbits=0,
         operations=[
-            CircuitOperation(gate="rz", qubits=[0], params={"theta": math.pi / 2})
+            CircuitOperation(gate="rz", qubits=[0], params={"theta": math.pi / 2}, moment=0)
         ],
         max_memory_mb=1024,
         stim_available=True,
@@ -196,7 +199,7 @@ def test_auto_uses_mps_past_statevector_hard_cap_when_allowed():
     analysis = analyze_circuit(
         num_qubits=31,
         num_clbits=0,
-        operations=[CircuitOperation(gate="t", qubits=[0])],
+        operations=[CircuitOperation(gate="t", qubits=[0], moment=0)],
         max_memory_mb=65_536,
     )
     options = SimulationOptions(max_memory_mb=65_536, allow_approximation=True)

@@ -10,6 +10,7 @@ import {
   runAndOpenQuantumState,
   selectEngineLane,
 } from "./stateAnalysisHelpers";
+import { clickCircuitCell } from "./helpers";
 
 test.beforeEach(async () => {
   test.skip(!(await requireBackend()), "Backend not reachable at http://localhost:8000 - start FastAPI to run this suite.");
@@ -128,29 +129,32 @@ test("A noisy density-matrix run shows a shortened (mixed) Bloch vector", async 
   expect(magnitude).toBeLessThan(1);
 });
 
-// NOTE: a Playwright scenario driving a real custom gate through the
-// Composer's "Simulator Lab" toolbar button and into this Quantum State tab
-// is intentionally not included here. Investigating one revealed a
-// pre-existing race in the Composer -> Simulator Lab handoff for circuits
-// containing "custom" operations: ComposerMode.openSimulatorLab() correctly
-// resolves the circuit (verified directly -- resolved.circuit's gates are
-// ["unitary"] at the moment of the click), but by the time Simulator Lab
-// actually issues its /circuit/simulate-v2 request, the circuit it holds has
-// reverted to the raw, unresolved "custom" operation, which the backend
-// rejects (a 422 on the disallowed "custom" gate literal) -- an honest
-// failure, not a silently wrong result, but not the success path either.
-// Two targeted fixes to app/simulator/page.tsx's one-shot `labCircuit`
-// handoff ref were tried and both failed to resolve it empirically, pointing
-// to something deeper in the client-side route transition than a component-
-// level timing fix can reach. This is pre-existing Composer/Simulator-Lab
-// handoff behavior, not something introduced by state analysis, and is
-// flagged for dedicated follow-up rather than fixed here. The backend's own
-// handling of a resolved "unitary" gate (what a correctly-flattened custom
-// gate becomes) is fully covered by
-// backend/tests/test_state_analysis_integration.py's unitary-gate
-// compatibility test, and every view in this file is otherwise gate-
-// provenance-agnostic -- it only ever renders the backend's state_analysis
-// JSON, never anything gate-shape-specific.
+test("Composer custom matrix gate stays resolved through the Simulator Lab handoff", async ({ page }) => {
+  await page.goto("/composer");
+  await page.getByRole("button", { name: "Create a new custom gate or operation" }).click();
+  const dialog = page.getByRole("dialog", { name: "New gate or operation" });
+  await dialog.getByRole("button", { name: "Hadamard (matrix example)" }).click();
+  await dialog.getByRole("button", { name: "Create gate" }).click();
+  await page.getByRole("button", { name: /^Hadamard \(matrix example\)\./ }).click();
+  await clickCircuitCell(page, 0, 7);
+  const analysisRequest = page.waitForRequest((request) => request.url().endsWith("/circuit/analyze") && request.method() === "POST");
+  await page.locator("#main-content").getByRole("button", { name: "Simulator Lab", exact: true }).click();
+  await expect(page).toHaveURL(/\/simulator/);
+  const analyzedCircuit = (await analysisRequest).postDataJSON() as { operations: Array<{ gate: string; matrix?: unknown; label?: string }> };
+  expect(analyzedCircuit.operations.some((operation) => operation.gate === "custom")).toBe(false);
+  expect(analyzedCircuit.operations.some((operation) => operation.gate === "unitary" && operation.matrix && operation.label)).toBe(true);
+  await expect(page.getByText("Live Composer circuit").first()).toBeVisible();
+  await selectEngineLane(page, "SV");
+  await enableStateAnalysis(page);
+  const runRequest = page.waitForRequest((request) => request.url().endsWith("/circuit/simulate-v2") && request.method() === "POST");
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  const runCircuit = ((await runRequest).postDataJSON() as { circuit: { operations: Array<{ gate: string; matrix?: unknown; label?: string }> } }).circuit;
+  expect(runCircuit.operations.some((operation) => operation.gate === "custom")).toBe(false);
+  expect(runCircuit.operations.some((operation) => operation.gate === "unitary" && operation.matrix && operation.label)).toBe(true);
+  await expect(page.getByText(/completed$/)).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "Quantum State" }).click();
+  await expect(page.getByText("Simulated quantum state")).toBeVisible();
+});
 
 test("JSON export downloads a file with the expected schema", async ({ page }) => {
   await gotoSimulatorWithCircuit(page, { num_qubits: 2, num_clbits: 0, operations: BELL_OPS });

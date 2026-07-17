@@ -77,14 +77,14 @@ export function buildLanes({
       pending("stabilizer", "Stabilizer", "ST", stabilizerEngine, "Polynomial tableau", "Large Clifford-only circuits.", "Rejects T gates and non-Clifford rotations."),
       pending("mps", "Matrix product state", "MPS", "aer_mps", "Depends on bond dimension χ", "Wide circuits whose entanglement remains low.", "Bond dimension can grow exponentially; truncation may approximate."),
       pending("density", "Density matrix", "DM", "aer_density_matrix", "16 × 4ⁿ bytes", "Small noisy or mixed-state workloads.", "More expensive than statevector; hard-capped at 15 qubits."),
-      pending("hardware", "Real quantum hardware", "QPU", null, "Physical qubits + samples", "Work beyond useful classical representations.", "No provider, credentials, topology, queue, or job route is configured here."),
+      pending("hardware", "Real quantum hardware", "QPU", null, "Physical qubits + samples", "Map circuits against account, fake, generic, or manual targets in Hardware Mapping.", "Topology discovery and transpilation are available; real job submission is intentionally disabled."),
     ];
   }
 
   const statevectorRisk = resourceRiskForBudget(4 + analysis.num_qubits, maxMemoryMb);
   const densityRisk = resourceRiskForBudget(4 + 2 * analysis.num_qubits, maxMemoryMb);
   let statevectorFit = riskVerdict(statevectorRisk);
-  let statevectorReason = `A full state needs ${analysis.estimated_statevector_memory_human} against the selected ${formatInteger(maxMemoryMb)} MB budget.`;
+  let statevectorReason = `A full state needs ${analysis.estimated_statevector_memory_human} against the selected ${formatInteger(maxMemoryMb)} MiB budget.`;
   if (analysis.num_qubits > LIMITS.simulation.statevectorHardCapQubits) {
     statevectorFit = { state: "blocked", verdict: "hard-cap rejection" };
     statevectorReason = `${analysis.num_qubits} qubits exceed this application's ${LIMITS.simulation.statevectorHardCapQubits}-qubit exact-engine cap; the full state needs ${analysis.estimated_statevector_memory_human}.`;
@@ -94,7 +94,7 @@ export function buildLanes({
   }
 
   let densityFit = riskVerdict(densityRisk);
-  let densityReason = `${analysis.estimated_density_matrix_memory_human} against the selected ${formatInteger(maxMemoryMb)} MB budget${noiseEnabled ? "; this is the applicable noisy method" : "; enable noise only when mixed-state modeling is needed"}.`;
+  let densityReason = `${analysis.estimated_density_matrix_memory_human} against the selected ${formatInteger(maxMemoryMb)} MiB budget${noiseEnabled ? "; this is the applicable noisy method" : "; enable noise only when mixed-state modeling is needed"}.`;
   if (analysis.num_qubits > LIMITS.simulation.densityMatrixHardCapQubits) {
     densityFit = { state: "blocked", verdict: "hard-cap rejection" };
     densityReason = `${analysis.num_qubits} qubits exceed the ${LIMITS.simulation.densityMatrixHardCapQubits}-qubit density-matrix cap; 16 × 4ⁿ bytes grows too quickly.`;
@@ -208,8 +208,8 @@ export function buildLanes({
       state: "external",
       verdict: hardwareRecommended ? "external candidate" : "not needed for this run",
       reason: hardwareRecommended
-        ? "Classical exact methods do not fit this circuit. Hardware is a separate execution target, not a faster simulator, and this repository has no provider route configured."
-        : "A classical method can handle this workload. Hardware would produce noisy samples and is not connected to this application.",
+        ? "Classical exact methods do not fit this circuit. Use Hardware Mapping to evaluate compatible targets and routing; QPU execution remains a separate, intentionally disabled boundary."
+        : "A classical method can handle this workload. Hardware Mapping is available for topology and transpilation study, while QPU execution remains disabled.",
       available: null,
       recommended: hardwareRecommended,
       selected: false,

@@ -4,6 +4,8 @@ uvicorn[standard]>=0.30,<1.0
 pydantic>=2.9,<3.0
 qiskit>=1.2,<3.0
 qiskit-aer>=0.15,<1.0
+matplotlib>=3.8,<4.0
+pylatexenc>=2.10,<3.0
 
 # Optional: the very fast, large-scale Clifford/stabilizer engine (Stim) lives in
 # requirements-stim.txt. Test tooling lives in requirements-dev.txt. The backend

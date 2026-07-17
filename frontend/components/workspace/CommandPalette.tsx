@@ -42,6 +42,7 @@ export function CommandPalette({ open, onClose, onOpenProjects }: { open: boolea
     return [
       { id: "nav-composer", group: "Navigate", label: "Go to Circuit Composer", hint: "editor", run: go("/composer") },
       { id: "nav-simulator", group: "Navigate", label: "Go to Simulator Lab", hint: "feasibility + engines", run: go("/simulator") },
+      { id: "nav-hardware", group: "Navigate", label: "Go to Hardware Mapping", hint: "topology + transpilation", run: go("/hardware") },
       { id: "nav-crypto", group: "Navigate", label: "Go to Cryptography Lab", hint: "BB84 · E91 · B92 · QRNG", run: go("/crypto") },
       // Actions contributed by the mounted view (e.g. Composer run/analyze).
       ...registeredActions.map((action) => ({ ...action, run: () => { action.run(); onClose(); } })),
@@ -95,6 +96,16 @@ export function CommandPalette({ open, onClose, onOpenProjects }: { open: boolea
         run: () => {
           workspace.setLabCircuit(workspace.circuit);
           router.push("/simulator");
+          onClose();
+        },
+      },
+      {
+        id: "circuit-to-hardware",
+        group: "Circuit",
+        label: "Open current circuit in Hardware Mapping",
+        run: () => {
+          workspace.setHardwareCircuit(workspace.circuit);
+          router.push("/hardware");
           onClose();
         },
       },

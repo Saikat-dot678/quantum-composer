@@ -122,7 +122,7 @@ export function CircuitAnalysisPanel({ analysis, loading, error, engines, runMem
             </div>
             <Badge tone={RISK_TONE[runStatevectorRisk]}>run budget: {runStatevectorRisk}</Badge>
           </div>
-          <p className="mt-1 text-[10px] text-lab-faint">16 × 2ⁿ bytes · evaluated against {formatInteger(runMemoryMb)} MB</p>
+          <p className="mt-1 text-[10px] text-lab-faint">16 × 2ⁿ bytes · evaluated against {formatInteger(runMemoryMb)} MiB</p>
         </div>
         <div className="bg-lab-surface px-4 py-3 sm:px-5">
           <div className="flex items-center justify-between gap-2">

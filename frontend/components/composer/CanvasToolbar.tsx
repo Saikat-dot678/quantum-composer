@@ -4,7 +4,7 @@
 // "Island" pattern) — replaces the old full-width bordered ComposerToolbar.
 // Left: undo/redo + zoom. Right: primary workflow actions. The circuit's
 // qubit/op/route status is a small on-canvas chip, not global chrome.
-import { Copy, FolderOpen, Minus, Plus, Redo2, Scan, Undo2 } from "lucide-react";
+import { Copy, FolderOpen, Minus, Network, Plus, Redo2, Scan, Undo2 } from "lucide-react";
 import { Badge, Button, Tooltip } from "@/components/ui/primitives";
 import { useWorkspace } from "@/components/workspace/WorkspaceProvider";
 import type { SimulationPath } from "@/lib/circuitRouting";
@@ -19,6 +19,7 @@ export function CanvasToolbar({
   onZoomOut,
   onZoomFit,
   onOpenSimulatorLab,
+  onOpenHardwareMapping,
   onAnalyze,
   onClear,
   onGenerate,
@@ -34,6 +35,7 @@ export function CanvasToolbar({
   onZoomOut: () => void;
   onZoomFit: () => void;
   onOpenSimulatorLab: () => void;
+  onOpenHardwareMapping: () => void;
   onAnalyze: () => void;
   onClear: () => void;
   onGenerate: () => void;
@@ -62,6 +64,7 @@ export function CanvasToolbar({
           {shareState === "copied" ? "Link copied ✓" : shareState === "blocked" ? "Too large" : "Share"}
         </Button>
         <Button variant="quiet" size="sm" onClick={onOpenSimulatorLab}><FolderOpen className="h-3.5 w-3.5" /><span className="hidden lg:inline">Simulator Lab</span></Button>
+        <Button variant="quiet" size="sm" onClick={onOpenHardwareMapping}><Network className="h-3.5 w-3.5" /><span className="hidden lg:inline">Hardware</span></Button>
         <Button variant="quiet" size="sm" onClick={onClear}>Clear</Button>
         <Button variant="secondary" size="sm" disabled={working} loading={busyAction === "analyze"} onClick={onAnalyze}>Analyze</Button>
         <Button variant="secondary" size="sm" disabled={working} loading={busyAction === "generate"} onClick={onGenerate}><Copy className="h-3.5 w-3.5" /><span className="hidden lg:inline">Generate</span></Button>

@@ -11,7 +11,7 @@ import type { SaveState } from "@/components/workspace/WorkspaceProvider";
 import type { BackendStatus, Mode } from "./types";
 import { MODE_LABELS } from "./types";
 
-const MODES: Mode[] = ["composer", "simulator", "crypto"];
+const MODES: Mode[] = ["composer", "simulator", "hardware", "crypto"];
 
 const BACKEND_COPY: Record<BackendStatus, { label: string; dot: string; detail: string }> = {
   checking: { label: "Checking", dot: "bg-warn", detail: "Contacting the FastAPI health endpoint." },
