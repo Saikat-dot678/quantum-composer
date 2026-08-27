@@ -3,6 +3,7 @@ import type { Viewport } from "next";
 import localFont from "next/font/local";
 import { ActionRegistryProvider } from "@/components/workspace/ActionRegistry";
 import { MotionRoot } from "@/components/workspace/MotionRoot";
+import { ThemeProvider } from "@/components/workspace/ThemeProvider";
 import { ToastProvider } from "@/components/workspace/ToastProvider";
 import { WorkspaceProvider } from "@/components/workspace/WorkspaceProvider";
 import { WorkspaceShell } from "@/components/workspace/WorkspaceShell";
@@ -32,23 +33,41 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  colorScheme: "light",
-  themeColor: "#f6f6f8",
+  colorScheme: "light dark",
 };
+
+const themeBootScript = `(() => {
+  try {
+    const stored = localStorage.getItem("quantum-composer.theme.v1");
+    const preference = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+    const resolved = preference === "system"
+      ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+      : preference;
+    document.documentElement.dataset.theme = resolved;
+    document.documentElement.style.colorScheme = resolved;
+  } catch {
+    document.documentElement.dataset.theme = "light";
+  }
+})();`;
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${fontUi.variable} ${fontMono.variable}`}>
+    <html lang="en" className={`${fontUi.variable} ${fontMono.variable}`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
+      </head>
       <body>
-        <MotionRoot>
-          <WorkspaceProvider>
-            <ToastProvider>
-              <ActionRegistryProvider>
-                <WorkspaceShell>{children}</WorkspaceShell>
-              </ActionRegistryProvider>
-            </ToastProvider>
-          </WorkspaceProvider>
-        </MotionRoot>
+        <ThemeProvider>
+          <MotionRoot>
+            <WorkspaceProvider>
+              <ToastProvider>
+                <ActionRegistryProvider>
+                  <WorkspaceShell>{children}</WorkspaceShell>
+                </ActionRegistryProvider>
+              </ToastProvider>
+            </WorkspaceProvider>
+          </MotionRoot>
+        </ThemeProvider>
       </body>
     </html>
   );

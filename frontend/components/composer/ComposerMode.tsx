@@ -15,7 +15,7 @@ import { getSimulationPath } from "@/lib/circuitRouting";
 import { encodeCircuitLinkCompressed } from "@/lib/circuitShare";
 import { LIMITS } from "@/lib/constants";
 import { definitionNumClbits, definitionNumQubits, type CustomDefinition } from "@/lib/customGates";
-import { localCustomGateRepository } from "@/lib/customGateRepository";
+import { CUSTOM_GATE_LIBRARY_EVENT, localCustomGateRepository } from "@/lib/customGateRepository";
 import { collectReferencedDefinitions, resolveCustomOperations } from "@/lib/customGateResolve";
 import { labApi } from "@/lib/labApi";
 import type { CircuitAnalysis } from "@/lib/labTypes";
@@ -112,7 +112,15 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
     setCustomDefinitions(localCustomGateRepository.list());
     setCustomRecentIds(localCustomGateRepository.recentIds());
   };
-  useEffect(() => { refreshCustomLibrary(); }, []);
+  useEffect(() => {
+    const syncLibrary = () => refreshCustomLibrary();
+    syncLibrary();
+    window.addEventListener(CUSTOM_GATE_LIBRARY_EVENT, syncLibrary);
+    return () => window.removeEventListener(CUSTOM_GATE_LIBRARY_EVENT, syncLibrary);
+    // The repository event is the persistence boundary: ordinary circuit
+    // mutations no longer cause unrelated localStorage reads/re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const customLibraryMap = useMemo(() => new Map(customDefinitions.map((definition) => [definition.id, definition])), [customDefinitions]);
 
   const sortedCircuit = useMemo(
@@ -145,16 +153,19 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
     setAnalysis(null);
     setBusyAction(null);
     setRunning(false);
-    setSelectedCell(null);
     setPending(null);
-    // A circuit swap (project switch, share-link load, JSON import) may have
-    // just brought in custom gate definitions through a different component
-    // (ProjectsDrawer, the share-link loader) that don't share this
-    // component's cached library state — re-read so the dock/canvas/inspector
-    // see them immediately rather than after some unrelated library edit.
-    refreshCustomLibrary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [circuit]);
+
+  // A selected operation should survive edits to that operation (parameter
+  // changes, endpoint swaps, replacements, moves). Only clear the inspector
+  // when the selected cell genuinely stops containing an operation, such as
+  // after delete/undo/register shrink. The old circuit-wide reset made every
+  // edit immediately dismiss its own inspector.
+  useEffect(() => {
+    if (!selectedCell) return;
+    const stillExists = circuit.operations.some((operation) => operation.moment === selectedCell.moment && operation.qubits.includes(selectedCell.qubit));
+    if (!stillExists) setSelectedCell(null);
+  }, [circuit.operations, selectedCell]);
 
   function placeOperation(gate: GateName, qubits: number[], moment: number, clbits: number[], theta?: number) {
     if (gate === "custom" || gate === "unitary") return false;
@@ -170,12 +181,8 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
 
   // Custom gates place immediately (no multi-click endpoint picking, even for
   // gates spanning many qubits) anchored at the clicked qubit, spanning
-  // downward. Unlike built-in placement above (which silently overwrites a
-  // conflicting cell — a pre-existing, unchanged convention), this routes
-  // through the same lib/placement.ts checkPlacement used by drag/keyboard
-  // movement, per the "one shared placement-validation system" requirement:
-  // a conflict here is rejected with a clear reason instead of silently
-  // deleting whatever was already there.
+  // downward. Placement uses the same lib/placement.ts validator as drag and
+  // keyboard movement, so conflicts are rejected instead of overwritten.
   function placeCustomGate(anchorQubit: number, moment: number, customId: string | null = selectedCustomId) {
     if (!customId) return;
     const definition = customLibraryMap.get(customId);
@@ -198,7 +205,6 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
     const operation: CircuitOperation = { gate: "custom", customId, qubits, clbits, params, moment };
     setCircuit((current) => ({ ...current, operations: [...current.operations, operation] }));
     localCustomGateRepository.touch(customId);
-    setCustomRecentIds(localCustomGateRepository.recentIds());
     setSelectedCell({ qubit: anchorQubit, moment });
   }
 
@@ -401,6 +407,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
     setCircuit(next);
     setColumns(Math.min(LIMITS.composer.interactiveMaxColumns, Math.max(8, lastMoment + 2)));
     setPending(null);
+    setSelectedCell(null);
     setMobilePanel("none");
     pushToast(`${preset.name} preset loaded.`, "success");
   }
@@ -621,7 +628,6 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
   }
 
   function handleCustomSaved(definition: CustomDefinition) {
-    refreshCustomLibrary();
     setSelectedGate("custom");
     setSelectedCustomId(definition.id);
     pushToast(`"${definition.name}" saved.`, "success");
@@ -650,7 +656,6 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
       run: () => {
         if (!selectedCustomDefinition) return;
         localCustomGateRepository.setFavorite(selectedCustomDefinition.id, !selectedCustomDefinition.favorite);
-        refreshCustomLibrary();
       },
     },
   ]);

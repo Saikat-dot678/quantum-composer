@@ -12,6 +12,7 @@ const RECOVERY_NOTICE_KEY = "quantum-composer.custom-gates.recovery-notice.v1";
 const RECOVERY_PREFIX = "quantum-composer.custom-gates.recovery.";
 const RECENT_KEY = "quantum-composer.custom-gates.recent.v1";
 const MAX_RECENT = 12;
+export const CUSTOM_GATE_LIBRARY_EVENT = "quantum-composer:custom-gates-changed";
 
 interface DefinitionEnvelope {
   version: 1;
@@ -37,6 +38,10 @@ export interface CustomGateRepository {
   touch(id: string): void;
   exportAll(): string;
   importMany(json: string): DefinitionMutation<{ imported: number; skipped: number; renamed: string[]; idMap: Record<string, string> }>;
+}
+
+function notifyLibraryChanged(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(CUSTOM_GATE_LIBRARY_EVENT));
 }
 
 function makeId(): string {
@@ -157,6 +162,7 @@ export const localCustomGateRepository: CustomGateRepository = {
       definitions.push(next);
     }
     const written = writeStore(definitions);
+    if (written.ok) notifyLibraryChanged();
     return written.ok ? { ok: true, value: next } : { ok: false, reason: written.reason };
   },
 
@@ -169,6 +175,7 @@ export const localCustomGateRepository: CustomGateRepository = {
     const next = { ...definitions[index], name: trimmed, updatedAt: Date.now() };
     definitions[index] = next;
     const written = writeStore(definitions);
+    if (written.ok) notifyLibraryChanged();
     return written.ok ? { ok: true, value: next } : { ok: false, reason: written.reason };
   },
 
@@ -184,7 +191,10 @@ export const localCustomGateRepository: CustomGateRepository = {
     const definitions = readStore();
     if (findIndex(definitions, id) < 0) return { ok: false, reason: "That custom gate no longer exists." };
     const written = writeStore(definitions.filter((def) => def.id !== id));
-    if (written.ok) writeRecent(readRecent().filter((recentId) => recentId !== id));
+    if (written.ok) {
+      writeRecent(readRecent().filter((recentId) => recentId !== id));
+      notifyLibraryChanged();
+    }
     return written;
   },
 
@@ -195,6 +205,7 @@ export const localCustomGateRepository: CustomGateRepository = {
     const next = { ...definitions[index], favorite, updatedAt: definitions[index].updatedAt };
     definitions[index] = next;
     const written = writeStore(definitions);
+    if (written.ok) notifyLibraryChanged();
     return written.ok ? { ok: true, value: next } : { ok: false, reason: written.reason };
   },
 
@@ -205,6 +216,7 @@ export const localCustomGateRepository: CustomGateRepository = {
 
   touch: (id) => {
     writeRecent([id, ...readRecent().filter((recentId) => recentId !== id)]);
+    notifyLibraryChanged();
   },
 
   exportAll: () => {
@@ -267,6 +279,7 @@ export const localCustomGateRepository: CustomGateRepository = {
 
     const written = writeStore(merged);
     if (!written.ok) return { ok: false, reason: written.reason };
+    notifyLibraryChanged();
     return { ok: true, value: { imported, skipped, renamed, idMap } };
   },
 };

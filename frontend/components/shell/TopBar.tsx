@@ -1,12 +1,12 @@
 "use client";
 
 // Slim top bar: product mark, segmented mode switch, and a small cluster of
-// global actions (backend status, projects, command palette). Replaces the
-// old persistent activity rail + console-header telemetry strip pattern —
-// per the reference study, circuit telemetry is now a contextual on-canvas
-// chip in Composer, not global chrome repeated on every route.
+// global actions (backend status, appearance, projects, command palette).
+// Circuit telemetry stays contextual on the Composer canvas rather than being
+// repeated globally on every route.
 import { Command, FolderOpen } from "lucide-react";
 import { Tooltip } from "@/components/ui/primitives";
+import { ThemeToggle } from "@/components/workspace/ThemeProvider";
 import type { SaveState } from "@/components/workspace/WorkspaceProvider";
 import type { BackendStatus, Mode } from "./types";
 import { MODE_LABELS } from "./types";
@@ -79,6 +79,7 @@ export function TopBar({
         </p>
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <ThemeToggle />
           <Tooltip content={backend.detail}>
             <button
               type="button"
@@ -89,11 +90,11 @@ export function TopBar({
               <span className="hidden sm:inline">{backend.label}</span>
             </button>
           </Tooltip>
-          <button type="button" onClick={onOpenProjects} aria-label="Open projects and recent circuits" className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-line-hairline bg-surface px-2.5 text-[11px] font-medium text-ink-700 hover:border-accent-500 hover:text-accent-700">
+          <button type="button" onClick={onOpenProjects} aria-label="Open projects and recent circuits" className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-line-hairline bg-surface px-2.5 text-[11px] font-medium text-ink-700 transition-colors hover:border-accent-500 hover:text-accent-700">
             <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
             <span className="hidden md:inline">Projects</span>
           </button>
-          <button type="button" onClick={onOpenPalette} aria-label="Open command palette (Control K)" className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-line-hairline bg-surface px-2.5 text-[11px] font-medium text-ink-700 hover:border-accent-500 hover:text-accent-700">
+          <button type="button" onClick={onOpenPalette} aria-label="Open command palette (Control K)" className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-line-hairline bg-surface px-2.5 text-[11px] font-medium text-ink-700 transition-colors hover:border-accent-500 hover:text-accent-700">
             <Command className="h-3.5 w-3.5" aria-hidden="true" />
             <kbd className="hidden font-mono text-[10px] text-ink-500 md:inline">⌘K</kbd>
           </button>

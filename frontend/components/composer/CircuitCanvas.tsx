@@ -7,21 +7,13 @@
 // decides how much is legible, and the minimap gives a bird's-eye jump.
 //
 // Interaction model: click an empty cell to place the gate chosen in the
-// dock; click an occupied cell to select it (Figma/Framer's "properties
-// panel is empty until something is selected" pattern, adapted to a canvas
-// grid) rather than deleting on click. Delete/Backspace removes the
-// selection, Ctrl/Cmd+D duplicates it. Arrow keys move a keyboard cursor
-// (one tab stop for the whole canvas, per WCAG 2.1.1 without a DOM explosion
-// at 128x256 cells); an aria-live region announces the cursor's cell content
-// for screen-reader users, since a zoomable spatial canvas cannot expose one
-// focusable DOM node per cell at this scale.
+// dock; click an occupied cell to select it rather than deleting on click.
+// Delete/Backspace removes the selection, Ctrl/Cmd+D duplicates it. Arrow
+// keys move a keyboard cursor; an aria-live region announces the cursor cell.
 //
-// Moving a placed gate: drag it directly (pointer) or select it and press M
-// (keyboard) to enter move mode, then arrow keys slide a preview and
-// Enter/Escape confirm/cancel. Both paths compute their target through the
-// same lib/placement.ts validator and both render through the same
-// `activeMove` ghost/highlight below, so drag and keyboard movement can never
-// disagree about what is a legal drop.
+// Moving a placed gate: drag it directly or select it and press M to enter
+// keyboard move mode. Both paths share lib/placement.ts validation and the
+// same move preview, so pointer and keyboard movement cannot disagree.
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import {
   CELL,
@@ -52,18 +44,23 @@ export interface CanvasCell {
 }
 
 const cellKey = (qubit: number, moment: number) => `${qubit}:${moment}`;
-const isBuiltinMulti = (operation: CircuitOperation) => BUILTIN_GATE_SET.has(operation.gate) && operation.qubits.length >= 2;
+const isBuiltinMulti = (operation: CircuitOperation) => BUILTIN_GATE_SET.has(operation.gate) && operation.gate !== "barrier" && operation.qubits.length >= 2;
+const isWholeRegisterBarrier = (operation: CircuitOperation, numQubits: number) => operation.gate === "barrier"
+  && operation.qubits.length === numQubits
+  && operation.qubits.every((qubit, index) => qubit === index);
 const MOVE_THRESHOLD_PX = 3;
 const EDGE_SCROLL_MARGIN = 36;
 const EDGE_SCROLL_SPEED = 14;
 
-/** Glyph for single-qubit and measurement gates only — two-qubit gates render bespoke SVG shapes inline. */
+/** Glyph for single-qubit, measurement, and movement previews. */
 function gateGlyph(operation: CircuitOperation, customLibrary?: ReadonlyMap<string, CustomDefinition>): string {
   if (operation.gate === "custom") {
     const definition = operation.customId ? customLibrary?.get(operation.customId) : undefined;
     return definition?.label ?? "?";
   }
-  return operation.gate === "measure" ? "M" : operation.gate.toUpperCase();
+  if (operation.gate === "measure") return "M";
+  if (operation.gate === "barrier") return "‖";
+  return operation.gate.toUpperCase();
 }
 
 function describeCell(operation: CircuitOperation | undefined, qubit: number, moment: number, customLibrary?: ReadonlyMap<string, CustomDefinition>): string {
@@ -72,18 +69,17 @@ function describeCell(operation: CircuitOperation | undefined, qubit: number, mo
     const definition = operation.customId ? customLibrary?.get(operation.customId) : undefined;
     return `q${qubit}, time ${moment}: ${definition ? `${definition.name} (custom)` : "custom gate (definition missing)"}`;
   }
+  if (operation.gate === "barrier") return `q${qubit}, time ${moment}: barrier across q${operation.qubits.join(", q")}`;
   const angle = typeof operation.params.theta === "number" ? ` at ${operation.params.theta.toFixed(3)} radians` : "";
   return `q${qubit}, time ${moment}: ${operation.gate.toUpperCase()} gate${angle}`;
 }
 
-/** One shared shape for "a move is in progress," whether driven by a pointer drag or keyboard move mode. */
 interface ActiveMove {
   operation: CircuitOperation;
   targetQubits: number[];
   targetMoment: number;
   valid: boolean;
   reason?: string;
-  /** True once the pointer has actually left the source cell / keyboard move mode has taken its first step. */
   hasMoved: boolean;
   source: "pointer" | "keyboard";
 }
@@ -93,7 +89,6 @@ export interface CircuitCanvasHandle {
   zoomOut: () => void;
   zoomToFit: () => void;
   focusCanvas: () => void;
-  /** Enter keyboard move mode for whatever operation is currently selected (used by the Inspector's Move button). */
   enterMoveMode: () => void;
 }
 
@@ -128,16 +123,12 @@ export function CircuitCanvas({
   onDeselect: () => void;
   onDeleteSelected: () => void;
   onDuplicateSelected: () => void;
-  /** Commits a validated move (drag or keyboard) — the parent owns the actual circuit mutation, exactly like delete/duplicate. */
   onMoveOperation: (operation: CircuitOperation, targetQubits: number[], targetMoment: number) => void;
   onCopySelected?: () => void;
   onPasteClipboard?: () => void;
-  /** Progressive enhancement: a gate chip was dropped from the dock onto this cell. */
   onDropGate?: (gate: GateName, cell: CanvasCell, customId?: string) => void;
   handleRef?: (handle: CircuitCanvasHandle) => void;
-  /** Resolved custom gate/operation library, keyed by id — used to render placed "custom" instances' glyph/label/kind. */
   customLibrary?: ReadonlyMap<string, CustomDefinition>;
-  /** Which custom definition is armed for placement when selectedGate === "custom". */
   selectedCustomId?: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -149,11 +140,6 @@ export function CircuitCanvas({
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
 
-  // Track the container's pixel size so we can compute which cells are
-  // actually visible and skip rendering the rest (see `visibleRange` below).
-  // This is the real fix for large circuits: a 128x256 grid is ~33,000 cells,
-  // enough SVG nodes to feel sluggish if drawn unconditionally, but the
-  // *viewport* only ever shows a few hundred at once.
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return;
@@ -168,8 +154,6 @@ export function CircuitCanvas({
   const contentWidth = canvasContentWidth(columns);
   const contentHeight = canvasContentHeight(numQubits, numClbits);
 
-  // Visible cell range in canvas space, padded by a couple of cells so
-  // panning doesn't visibly pop content in at the edges.
   const visibleRange = useMemo(() => {
     if (viewportSize.width === 0) {
       return { momentStart: 0, momentEnd: Math.min(columns, 40), qubitStart: 0, qubitEnd: numQubits };
@@ -220,14 +204,11 @@ export function CircuitCanvas({
     setViewport({ x: -((rect.width / zoom - contentWidth) / 2), y: -((rect.height / zoom - contentHeight) / 2), zoom });
   }, [contentWidth, contentHeight]);
 
-  // Fit the initial view once on mount / when the container first has size.
   useEffect(() => {
     zoomToFit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Stable identity so the memoized CanvasMinimap can actually skip
-  // re-rendering when neither its own props nor this callback changed.
   const handlePanTo = useCallback((canvasX: number, canvasY: number) => {
     setViewport((current) => ({
       ...current,
@@ -244,39 +225,32 @@ export function CircuitCanvas({
     }
   };
 
-  // ---------------------------------------------------------------------
-  // Gate movement — pointer drag and keyboard move mode share one state
-  // shape (`ActiveMove`) and one validator (checkPlacement), so the ghost
-  // preview, the valid/invalid highlight, and the actual commit are
-  // identical regardless of which interaction is driving them.
-  // ---------------------------------------------------------------------
   const [activeMove, setActiveMove] = useState<ActiveMove | null>(null);
   const activeMoveRef = useRef<ActiveMove | null>(null);
   activeMoveRef.current = activeMove;
-  // Primed by pointerdown on a gate; promoted to a real drag once the
-  // pointer actually moves past the threshold (mirrors the container's own
-  // click-vs-pan distinction, so a plain click on a gate still reaches
-  // onClick normally instead of being swallowed as a zero-distance "move").
   const dragCandidateRef = useRef<{ operation: CircuitOperation; pointerId: number } | null>(null);
   const edgeScrollFrame = useRef<number | null>(null);
   const lastPointerClient = useRef<{ x: number; y: number } | null>(null);
 
   const circuitForCheck = useMemo(() => ({ num_qubits: numQubits, num_clbits: numClbits, shots: 1, operations }), [numQubits, numClbits, operations]);
 
+  const shiftedMoveQubits = useCallback((operation: CircuitOperation, anchorQubit: number): number[] => {
+    // A full-register barrier is a synchronization boundary over that exact
+    // register. Dragging it from q1/q2 should move it in time, not attempt to
+    // translate [0..n] beyond the register and become spuriously invalid.
+    if (isWholeRegisterBarrier(operation, numQubits)) return operation.qubits;
+    return shiftQubits(operation.qubits, anchorQubit);
+  }, [numQubits]);
+
   const computeMoveTarget = useCallback((operation: CircuitOperation, canvasPoint: { x: number; y: number }, source: ActiveMove["source"], pointerOutside = false): ActiveMove => {
     const cell = pointToCell(canvasPoint.x, canvasPoint.y, { numQubits, numClbits, columns });
-    const targetQubits = shiftQubits(operation.qubits, cell.qubit);
-    // A pointer released outside the canvas's own bounds cancels rather than
-    // snapping to whichever edge cell pointToCell's clamping happens to land
-    // on — the ghost still tracks the nearest cell for visual continuity, but
-    // `valid` is forced false so a drop out there can never commit.
+    const targetQubits = shiftedMoveQubits(operation, cell.qubit);
     const check = pointerOutside
       ? { ok: false, reason: "Dropped outside the canvas — the move was canceled, nothing was placed or deleted." }
       : checkPlacement(circuitForCheck, { qubits: targetQubits, clbits: operation.clbits, moment: cell.moment }, { excludeOperation: operation, columns });
     return { operation, targetQubits, targetMoment: cell.moment, valid: check.ok, reason: check.reason, hasMoved: true, source };
-  }, [numQubits, numClbits, columns, circuitForCheck]);
+  }, [numQubits, numClbits, columns, shiftedMoveQubits, circuitForCheck]);
 
-  /** Is (clientX, clientY) within the canvas container's own rendered bounds? */
   const isPointWithinCanvas = useCallback((clientX: number, clientY: number): boolean => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return false;
@@ -298,9 +272,6 @@ export function CircuitCanvas({
     }
   }, []);
 
-  // Optional edge auto-scroll while dragging: runs its own rAF loop instead
-  // of recomputing on every pointermove, so panning speed stays smooth and
-  // independent of how often pointer events actually arrive.
   const runEdgeScroll = useCallback(() => {
     const rect = containerRef.current?.getBoundingClientRect();
     const point = lastPointerClient.current;
@@ -313,8 +284,7 @@ export function CircuitCanvas({
     else if (rect.bottom - point.y < EDGE_SCROLL_MARGIN) dy = EDGE_SCROLL_SPEED;
     if (dx !== 0 || dy !== 0) {
       setViewport((current) => ({ ...current, x: current.x + dx / current.zoom, y: current.y + dy / current.zoom }));
-      const move = dragCandidateRef.current;
-      const candidateOp = move.operation;
+      const candidateOp = dragCandidateRef.current.operation;
       const canvasPoint = screenToCanvas(point.x, point.y, rect, viewportRef.current);
       setActiveMove(computeMoveTarget(candidateOp, canvasPoint, "pointer", !isPointWithinCanvas(point.x, point.y)));
       edgeScrollFrame.current = requestAnimationFrame(runEdgeScroll);
@@ -323,12 +293,6 @@ export function CircuitCanvas({
     }
   }, [computeMoveTarget, isPointWithinCanvas]);
 
-  // Pointer capture is acquired lazily, only once real dragging is detected
-  // (not on every pointerdown). Capturing unconditionally would redirect the
-  // browser's synthesized `click` target to the container itself, silently
-  // breaking every child <g onClick> gate handler — clicks would appear to do
-  // nothing. Plain clicks (placement/selection) must reach their target
-  // element normally; only an actual pan/move gesture needs capture.
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 && event.pointerType === "mouse") return;
     dragRef.current = { pointerId: event.pointerId, lastX: event.clientX, lastY: event.clientY, moved: false };
@@ -336,9 +300,6 @@ export function CircuitCanvas({
 
   const handleGatePointerDown = (event: ReactPointerEvent<SVGGElement>, operation: CircuitOperation) => {
     if (event.button !== 0 && event.pointerType === "mouse") return;
-    // Deliberately does not stopPropagation: the container's own
-    // pointerdown still primes its pan-candidate bookkeeping, and a plain
-    // click still bubbles up to this element's own onClick for selection.
     dragCandidateRef.current = { operation, pointerId: event.pointerId };
   };
 
@@ -362,7 +323,6 @@ export function CircuitCanvas({
         if (edgeScrollFrame.current === null) edgeScrollFrame.current = requestAnimationFrame(runEdgeScroll);
       }
     } else if (drag.moved) {
-      // Ordinary canvas pan — unaffected by gate movement.
       setViewport((current) => ({ ...current, x: current.x - dx / current.zoom, y: current.y - dy / current.zoom }));
     }
     drag.lastX = event.clientX;
@@ -405,15 +365,8 @@ export function CircuitCanvas({
     if (gate && cell) onDropGate(gate, cell, customId);
   };
 
-  // Announces the cursor's cell whenever it moves OR whenever the operation
-  // sitting under it changes (placement, deletion, undo/redo all flow back in
-  // as a new `operations` prop). A synchronous read right after calling
-  // onPlaceOrSelect would still see the pre-update state, since that setState
-  // lives in the parent — reacting to the actual data instead of guessing at
-  // its outcome keeps the announcement honest for every code path, not just
-  // clicks.
   useEffect(() => {
-    if (activeMove) return; // move-mode has its own announcements below.
+    if (activeMove) return;
     setAnnouncement(describeCell(operationIndex.get(cellKey(cursor.qubit, cursor.moment)), cursor.qubit, cursor.moment, customLibrary));
   }, [operationIndex, cursor, activeMove, customLibrary]);
 
@@ -436,19 +389,12 @@ export function CircuitCanvas({
     setCursor(next);
   };
 
-  // Keyboard move mode: an accessible equivalent to dragging. Select a gate,
-  // press M, then arrow keys slide the *target* (not the viewport cursor);
-  // Enter commits through the same checkPlacement path as a drag, Escape
-  // cancels without changing anything.
   const startKeyboardMove = useCallback((operation: CircuitOperation) => {
     setActiveMove({
       operation,
       targetQubits: operation.qubits,
       targetMoment: operation.moment,
       valid: true,
-      // Unlike a pointerdown (which could just be a click), pressing M is
-      // already an unambiguous, deliberate "start moving" action — show the
-      // banner and ghost immediately rather than waiting for a first arrow step.
       hasMoved: true,
       source: "keyboard",
     });
@@ -460,7 +406,7 @@ export function CircuitCanvas({
       if (!current || current.source !== "keyboard") return current;
       const anchor = Math.min(Math.max(current.targetQubits[0] + dq, 0), Math.max(numQubits - 1, 0));
       const moment = Math.min(Math.max(current.targetMoment + dm, 0), Math.max(columns - 1, 0));
-      const targetQubits = shiftQubits(current.operation.qubits, anchor);
+      const targetQubits = shiftedMoveQubits(current.operation, anchor);
       const check = checkPlacement(
         circuitForCheck,
         { qubits: targetQubits, clbits: current.operation.clbits, moment },
@@ -472,7 +418,7 @@ export function CircuitCanvas({
         : `Invalid: ${check.reason}`);
       return next;
     });
-  }, [numQubits, columns, circuitForCheck]);
+  }, [numQubits, columns, shiftedMoveQubits, circuitForCheck]);
 
   const confirmKeyboardMove = useCallback(() => {
     setActiveMove((current) => {
@@ -502,9 +448,6 @@ export function CircuitCanvas({
   }, [handleRef, zoomAt, zoomToFit, selectedCell, operationIndex, startKeyboardMove]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    // Escape cancels an in-progress move regardless of how it started — a
-    // pointer drag held down while the other hand hits Escape is a real path,
-    // not just keyboard move mode.
     if (activeMove && event.key === "Escape") {
       event.preventDefault();
       cancelActiveMove();
@@ -556,23 +499,15 @@ export function CircuitCanvas({
     }
   };
 
-  // Full-length lists: wires and headers are cheap (one element per row/column
-  // regardless of grid size, at most a few hundred).
   const qubitList = Array.from({ length: numQubits }, (_, index) => index);
   const clbitList = Array.from({ length: numClbits }, (_, index) => index);
   const headerCols = Array.from({ length: columns }, (_, index) => index).slice(visibleRange.momentStart, visibleRange.momentEnd);
-  // Virtualized lists: the per-cell gate loop is the expensive part (up to
-  // numQubits x columns), so it only iterates the visible window.
   const visibleCols = Array.from({ length: visibleRange.momentEnd - visibleRange.momentStart }, (_, index) => index + visibleRange.momentStart);
   const visibleQubits = Array.from({ length: visibleRange.qubitEnd - visibleRange.qubitStart }, (_, index) => index + visibleRange.qubitStart);
   const visibleOperations = useMemo(
-    () => operations.filter((op) => op.moment >= visibleRange.momentStart && op.moment <= visibleRange.momentEnd),
+    () => operations.filter((op) => op.moment >= visibleRange.momentStart && op.moment < visibleRange.momentEnd),
     [operations, visibleRange.momentStart, visibleRange.momentEnd],
   );
-  // Ghost preview at the keyboard cursor: shown for single-endpoint gates only
-  // (two-qubit gates already get a distinct "first endpoint" ring via `pending`;
-  // a multi-qubit custom gate places immediately, anchored at the clicked cell,
-  // so it is treated the same way here rather than trying to preview its full span).
   const selectedCustomDefinition = selectedGate === "custom" && selectedCustomId ? customLibrary?.get(selectedCustomId) : undefined;
   const selectedBuiltin = BUILTIN_GATE_SET.has(selectedGate) ? GATE_DEFINITIONS[selectedGate as BuiltinGateName] : null;
   const isMultiEndpointGate = (selectedBuiltin?.defaultQubits ?? 1) > 1 || (selectedGate === "custom" && (selectedCustomDefinition?.numQubits ?? 1) > 1);
@@ -599,7 +534,6 @@ export function CircuitCanvas({
       >
         <svg width="100%" height="100%" role="presentation">
           <g transform={`scale(${viewport.zoom}) translate(${-viewport.x}, ${-viewport.y})`}>
-            {/* Wires (static layer): cheap, redrawn only when register/columns change in practice. */}
             {qubitList.map((qubit) => (
               <g key={`wire-${qubit}`}>
                 <line x1={GUTTER.left - 24} y1={qubitCenterY(qubit)} x2={GUTTER.left + columns * CELL.width} y2={qubitCenterY(qubit)} stroke="#c2c2c9" strokeWidth={1.5} />
@@ -629,7 +563,6 @@ export function CircuitCanvas({
               />
             )}
 
-            {/* Moment headers, with a highlighted column under the active move's target. */}
             {headerCols.map((moment) => (
               <text
                 key={`t-${moment}`}
@@ -645,7 +578,6 @@ export function CircuitCanvas({
               </text>
             ))}
 
-            {/* Snap guides + target highlight for the operation currently being moved. */}
             {activeMove?.hasMoved && (
               <g pointerEvents="none">
                 <line
@@ -674,7 +606,6 @@ export function CircuitCanvas({
                     stroke={activeMove.valid ? "#059669" : "#dc2626"} strokeWidth={1.5} opacity={0.6}
                   />
                 )}
-                {/* Ghost glyph(s) at the proposed target. Custom gates have no fixed control/target convention, so every row shows the same label. */}
                 {activeMove.targetQubits.map((q, index) => (
                   <text
                     key={`ghost-${q}`}
@@ -688,7 +619,7 @@ export function CircuitCanvas({
                     fill={activeMove.valid ? "#047857" : "#b91c1c"}
                     opacity={0.85}
                   >
-                    {activeMove.targetQubits.length === 2 && activeMove.operation.gate !== "custom"
+                    {activeMove.targetQubits.length === 2 && activeMove.operation.gate !== "custom" && activeMove.operation.gate !== "barrier"
                       ? (index === 0 ? "●" : gateGlyph(activeMove.operation, customLibrary))
                       : gateGlyph(activeMove.operation, customLibrary)}
                   </text>
@@ -696,7 +627,35 @@ export function CircuitCanvas({
               </g>
             )}
 
-            {/* Built-in multi-qubit connectors */}
+            {/* Barrier is a circuit operation, not a controlled gate. Render one
+                intentional synchronization boundary over exactly its qubit span. */}
+            {visibleOperations.filter((operation) => operation.gate === "barrier" && operation.qubits.length > 0).map((operation, index) => {
+              const low = Math.min(...operation.qubits);
+              const high = Math.max(...operation.qubits);
+              const selected = selectedCell?.moment === operation.moment && operation.qubits.includes(selectedCell.qubit);
+              const moving = activeMove?.hasMoved && operation === activeMove.operation;
+              return (
+                <g
+                  key={`barrier-${index}`}
+                  pointerEvents="none"
+                  opacity={moving ? 0.28 : 1}
+                  data-circuit-barrier="true"
+                  data-moment={operation.moment}
+                  data-qubits={operation.qubits.join(",")}
+                >
+                  <line
+                    x1={momentCenterX(operation.moment)}
+                    y1={qubitCenterY(low) - CELL.height / 2 + 6}
+                    x2={momentCenterX(operation.moment)}
+                    y2={qubitCenterY(high) + CELL.height / 2 - 6}
+                    stroke={selected ? "#4f46e5" : "#a1a1aa"}
+                    strokeWidth={selected ? 3 : 2}
+                    strokeDasharray="5 4"
+                  />
+                </g>
+              );
+            })}
+
             {visibleOperations.filter(isBuiltinMulti).map((op, index) => {
               const low = Math.min(...op.qubits);
               const high = Math.max(...op.qubits);
@@ -704,7 +663,6 @@ export function CircuitCanvas({
               return <line key={`conn-${index}`} x1={momentCenterX(op.moment)} y1={qubitCenterY(low)} x2={momentCenterX(op.moment)} y2={qubitCenterY(high)} stroke="#6366f1" strokeWidth={1.5} opacity={isMoving ? 0.3 : 1} />;
             })}
 
-            {/* Custom gate/operation connectors — any qubit span, not just two. */}
             {visibleOperations.filter((op) => op.gate === "custom" && op.qubits.length >= 2).map((op, index) => {
               const low = Math.min(...op.qubits);
               const high = Math.max(...op.qubits);
@@ -723,7 +681,6 @@ export function CircuitCanvas({
               );
             })}
 
-            {/* Measurement drop lines to classical wires */}
             {visibleOperations.filter((op) => op.gate === "measure" && op.clbits[0] != null).map((op, index) => (
               <line key={`meas-${index}`} x1={momentCenterX(op.moment)} y1={qubitCenterY(op.qubits[0]) + 14} x2={momentCenterX(op.moment)} y2={clbitCenterY(op.clbits[0], numQubits) - 6} stroke="#059669" strokeWidth={1.25} strokeDasharray="2 2" opacity={activeMove?.hasMoved && op === activeMove.operation ? 0.3 : 1} />
             ))}
@@ -734,7 +691,6 @@ export function CircuitCanvas({
               }),
             )}
 
-            {/* Gates (virtualized: only the visible window is iterated) */}
             {visibleQubits.map((qubit) =>
               visibleCols.map((moment) => {
                 const key = cellKey(qubit, moment);
@@ -766,9 +722,11 @@ export function CircuitCanvas({
 
                 if (operation.gate === "barrier") {
                   return (
-                    <g key={key} onClick={(event) => handleGateClick(event, qubit, moment)} onPointerDown={(event) => handleGatePointerDown(event, operation)} className="cursor-grab active:cursor-grabbing">
+                    <g key={key} onClick={(event) => handleGateClick(event, qubit, moment)} onPointerDown={(event) => handleGatePointerDown(event, operation)} className="cursor-grab active:cursor-grabbing" opacity={isMovingSource ? 0.35 : 1}>
+                      <title>{`Barrier across q${operation.qubits.join(", q")} — synchronization/compiler boundary`}</title>
                       <rect x={cx - CELL.width / 2} y={cy - CELL.height / 2} width={CELL.width} height={CELL.height} fill="transparent" />
-                      <line x1={cx} y1={cy - 22} x2={cx} y2={cy + 22} stroke="#a1a1aa" strokeWidth={2} strokeDasharray="4 3" />
+                      {isSelected && <rect x={cx - 7} y={cy - 7} width={14} height={14} rx={4} fill="#eef2ff" stroke="#4f46e5" strokeWidth={1.5} />}
+                      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontFamily="var(--font-mono)" fontSize={10} fontWeight={700} fill={isSelected ? "#4f46e5" : "#63636c"}>‖</text>
                       {isCursor && <rect x={cx - 17} y={cy - 17} width={34} height={34} rx={8} fill="none" stroke="#a5a6f6" strokeWidth={1.5} strokeDasharray="3 2" />}
                     </g>
                   );

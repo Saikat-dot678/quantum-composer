@@ -29,8 +29,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
       - name: Run tests (Stim intentionally NOT installed)
-        # Verifies the app degrades cleanly when the optional Stim engine is absent.
-        run: pytest -q
+        # `python -m pytest` keeps the backend working directory on sys.path,
+        # matching local execution and the project's top-level backend imports.
+        run: python -m pytest -q
 
   backend-stim:
     name: Backend with optional Stim
@@ -50,10 +51,10 @@ jobs:
           pip install -r requirements-dev.txt
           pip install -r requirements-stim.txt
       - name: Run tests with Stim available
-        run: pytest -q
+        run: python -m pytest -q
 
   frontend:
-    name: Frontend (build + lint)
+    name: Frontend (unit + build + lint)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -67,6 +68,8 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
+      - name: Unit tests
+        run: npm run test:unit
       - name: Lint
         run: npm run lint
       - name: Type-check
@@ -75,7 +78,7 @@ jobs:
         run: npm run build
 
   frontend-e2e:
-    name: Frontend smoke (Playwright)
+    name: Frontend interaction + accessibility (Playwright)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -93,8 +96,10 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Build
         run: npm run build
-      # Backend-independent: the suites assert the workbench renders honestly
-      # even when the FastAPI backend is unreachable. Visual snapshots are
-      # skipped in CI (baselines are platform-specific).
-      - name: Run smoke + accessibility suites
-        run: npx playwright test e2e/smoke.spec.ts e2e/a11y.spec.ts
+      # These suites are intentionally backend-independent: they exercise the
+      # editor, pointer/keyboard movement, custom-gate persistence, responsive
+      # shells, theme state, and accessibility while FastAPI is unreachable.
+      # Platform-specific visual snapshots and backend integration suites remain
+      # separate because their prerequisites differ from this Linux smoke job.
+      - name: Run editor interaction + accessibility suites
+        run: npx playwright test e2e/smoke.spec.ts e2e/movement.spec.ts e2e/custom-gates.spec.ts e2e/operation-ordering.spec.ts e2e/a11y.spec.ts

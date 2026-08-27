@@ -3,9 +3,9 @@ import { expect, test } from "@playwright/test";
 import { clickCircuitCell, openCommandPalette, openProjectsDrawer, projectStatus, workspaceStatus } from "./helpers";
 
 // Backend-independent smoke checks for the workbench: shell + telemetry,
-// rail navigation, deep links, compressed and legacy share links, undo/redo,
-// the command palette (including registered Composer actions), the projects
-// drawer, roving grid keys, and the local state preview.
+// route navigation, themes, deep links, share links, undo/redo, the command
+// palette, projects, keyboard canvas UX, gate editing, barriers, responsive
+// sheets, and the local state preview.
 
 function encodeLegacy(circuit: unknown): string {
   return Buffer.from(JSON.stringify(circuit), "utf-8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -42,6 +42,23 @@ test("top bar mode switcher navigates between routes", async ({ page }) => {
   await nav.getByRole("button", { name: "Composer" }).click();
   await expect(page).toHaveURL(/\/composer$/);
   await expect(page.getByRole("application")).toBeVisible();
+});
+
+test("theme preference switches without reload and persists across routes and refresh", async ({ page }) => {
+  await page.goto("/composer");
+  await page.getByRole("button", { name: /Theme:/ }).click();
+  await page.getByRole("menuitemradio", { name: /Dark/ }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  await page.getByRole("navigation", { name: "Workspace mode" }).getByRole("button", { name: "Simulator" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.getByRole("button", { name: "Theme: dark" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Theme: dark" }).click();
+  await page.getByRole("menuitemradio", { name: /Light/ }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
 
 test("labs are directly deep-linkable", async ({ page }) => {
@@ -112,7 +129,6 @@ test("projects: save, autosave binding, and recent-project reopening", async ({ 
   await expect(page.getByRole("status").filter({ hasText: "Saved “E2E Bell”" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(projectStatus(page)).toContainText("E2E Bell");
-  // The palette lists it as a recent project.
   await openCommandPalette(page);
   await page.getByRole("combobox", { name: "Search commands" }).fill("E2E Bell");
   await expect(page.getByRole("option", { name: /Open recent: E2E Bell/ })).toBeVisible();
@@ -138,7 +154,6 @@ test("live state preview shows Bell amplitudes and the Bloch sphere for 1 qubit"
   await expect(preview).toContainText("|00⟩");
   await expect(preview).toContainText("|11⟩");
   await expect(preview).toContainText("entangled");
-  // Load the 1-qubit superposition preset via the palette → Bloch sphere appears.
   await openCommandPalette(page);
   await page.getByRole("combobox", { name: "Search commands" }).fill("superposition");
   await page.keyboard.press("Enter");
@@ -149,26 +164,67 @@ test("placing a two-qubit gate connects both endpoints in one moment", async ({ 
   await page.goto("/composer");
   await expect(workspaceStatus(page)).toContainText("2q · 4 ops");
   await page.getByRole("button", { name: /^Controlled X\./ }).click();
-  // Both clicks target moment 7 (empty for both qubits in the default preset):
-  // the first click arms a pending endpoint on q0, the second on q1 completes it.
   await clickCircuitCell(page, 0, 7);
   await clickCircuitCell(page, 1, 7);
   await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
 });
 
-test("a placed gate can be repositioned via select, delete, and re-place", async ({ page }) => {
+test("newly placed gates stay selected and parameter edits keep the inspector stable", async ({ page }) => {
+  await page.goto("/composer");
+  await expect(workspaceStatus(page)).toContainText("2q · 4 ops");
+  await page.getByRole("button", { name: /^X rotation\./ }).click();
+  await clickCircuitCell(page, 0, 7);
+  await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
+  await expect(page.getByText("Selected operation", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "X rotation" })).toBeVisible();
+
+  const theta = page.locator("#parameter-theta");
+  await theta.fill("pi/4");
+  await theta.press("Enter");
+  await expect(page.getByText("Selected operation", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "X rotation" })).toBeVisible();
+  await expect(theta).toHaveValue(String(Math.PI / 4));
+});
+
+test("a placed gate can be deleted and re-placed without an extra selection click", async ({ page }) => {
   await page.goto("/composer");
   await expect(workspaceStatus(page)).toContainText("2q · 4 ops");
   await page.getByRole("button", { name: /^Hadamard\./ }).click();
   await clickCircuitCell(page, 0, 7);
   await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
-  // Select the gate just placed, then delete it and place it one column over.
-  await clickCircuitCell(page, 0, 7);
   await expect(page.getByText("Selected operation", { exact: true })).toBeVisible();
   await page.keyboard.press("Delete");
   await expect(workspaceStatus(page)).toContainText("2q · 4 ops");
   await clickCircuitCell(page, 0, 6);
   await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
+  await expect(page.getByText("Selected operation", { exact: true })).toBeVisible();
+});
+
+test("barrier renders as a full synchronization boundary and moves as one operation", async ({ page }) => {
+  await page.goto("/composer");
+  await page.getByRole("button", { name: /^Barrier\./ }).click();
+  await clickCircuitCell(page, 0, 7);
+  await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
+  await expect(page.getByRole("heading", { name: "Barrier" })).toBeVisible();
+  await expect(page.locator('[data-circuit-barrier="true"][data-moment="7"][data-qubits="0,1"]')).toBeVisible();
+
+  const canvas = page.getByRole("application");
+  await canvas.focus();
+  await page.keyboard.press("m");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-circuit-barrier="true"][data-moment="6"][data-qubits="0,1"]')).toBeVisible();
+  await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
+
+  await page.keyboard.press("Control+z");
+  await expect(page.locator('[data-circuit-barrier="true"][data-moment="7"][data-qubits="0,1"]')).toBeVisible();
+  await page.keyboard.press("Control+y");
+  await expect(page.locator('[data-circuit-barrier="true"][data-moment="6"][data-qubits="0,1"]')).toBeVisible();
+
+  await clickCircuitCell(page, 0, 6);
+  await page.keyboard.press("Delete");
+  await expect(workspaceStatus(page)).toContainText("2q · 4 ops");
+  await expect(page.locator('[data-circuit-barrier="true"]')).toHaveCount(0);
 });
 
 test("mobile viewport exposes the gate dock and settings as bottom sheets", async ({ page }) => {
@@ -199,11 +255,8 @@ test("mobile viewport top bar switches routes without the desktop mode labels ov
 });
 
 test("the backend-offline state is honest and offers a retry", async ({ page }) => {
-  // The whole suite runs against a production build with no backend attached
-  // (see playwright.config.ts) — this asserts that offline state explicitly
-  // instead of only relying on other tests not crashing because of it.
   await page.goto("/composer");
   const backendPill = page.getByRole("button", { name: /Offline|Checking/ }).first();
   await expect(backendPill).toBeVisible();
-  await expect(page.getByRole("application")).toBeVisible(); // canvas still usable offline
+  await expect(page.getByRole("application")).toBeVisible();
 });
