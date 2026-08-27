@@ -45,13 +45,15 @@ amplitudes:
 
 ### Stabilizer / Clifford (Gottesman–Knill)
 
-Circuits built only from Clifford gates — `X, Y, Z, H, S, CX, CZ, SWAP`, and
-measurement — can be simulated in **polynomial** time and memory by tracking a
+Circuits built only from Clifford gates — including `I, X, Y, Z, H, SX, S`,
+their daggers, `CX, CY, CZ, SWAP, iSWAP, DCX, ECR`, measurement/reset/barrier,
+and supported rotations at Clifford angles — can be simulated in **polynomial** time and memory by tracking a
 set of stabilizer generators instead of amplitudes. The underlying methods can
 scale to thousands of qubits and, in specialized Stim workloads, potentially
 much farther. **Quantum Composer itself currently accepts at most 4096 qubits**;
 that schema ceiling is not a runtime promise. The catch is that **any**
-non-Clifford gate (a `T`, or a rotation at a non-multiple-of-π/2 angle) breaks
+non-Clifford gate (a `T`, `CH`, Toffoli/Fredkin, or a rotation outside its
+documented Clifford multiples) breaks
 the formalism. Clifford circuits alone are *not universal* and cannot, by
 themselves, give a quantum advantage.
 

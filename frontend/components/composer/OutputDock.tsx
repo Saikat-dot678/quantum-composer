@@ -16,6 +16,7 @@ export function OutputDock({
   circuit,
   code,
   qasm,
+  qasm3,
   result,
   running,
   autoExpandKey,
@@ -23,6 +24,7 @@ export function OutputDock({
   circuit: CircuitData;
   code: string;
   qasm: string;
+  qasm3: string;
   result: ResultView | null;
   running: boolean;
   /** Changing this value (e.g. a run counter) auto-expands the dock. */
@@ -59,7 +61,7 @@ export function OutputDock({
             className="overflow-hidden"
           >
             <div className="grid h-[min(52vh,620px)] min-w-0 gap-4 overflow-y-auto p-4 xl:grid-cols-2">
-              <CodePanel circuit={circuit} code={code} qasm={qasm} />
+              <CodePanel circuit={circuit} code={code} qasm={qasm} qasm3={qasm3} />
               <ResultsPanel result={result} running={running} />
             </div>
           </motion.div>

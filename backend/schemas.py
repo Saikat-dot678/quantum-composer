@@ -5,32 +5,11 @@ from enum import Enum
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from gate_registry import GATE_NAMES, get_gate_spec
 from visualization.schemas import CircuitDiagramPayload
 
 
-GateName = Literal[
-    "x",
-    "y",
-    "z",
-    "h",
-    "s",
-    "t",
-    "rx",
-    "ry",
-    "rz",
-    "cx",
-    "cz",
-    "swap",
-    "measure",
-    "barrier",
-    # Resolver-output-only (see frontend lib/customGateResolve.ts): the
-    # frontend's "custom" gates are never sent to this API directly.
-    # Decomposition/composite custom gates are flattened into the built-in
-    # gates above; only matrix-defined custom gates produce this one new
-    # gate, carrying its own literal matrix. The frontend never places
-    # "unitary" directly and it never round-trips through save/share.
-    "unitary",
-]
+GateName = str
 
 # Matches the frontend's lib/customGates.ts MAX_MATRIX_QUBITS /
 # DEFAULT_UNITARITY_TOLERANCE exactly, enforced again here since a request
@@ -71,6 +50,13 @@ class CircuitOperation(BaseModel):
     # only for generated-code readability (e.g. UnitaryGate(..., label=...)).
     label: Optional[str] = Field(default=None, max_length=32)
 
+    @field_validator("gate")
+    @classmethod
+    def gate_must_be_supported(cls, value: str) -> str:
+        if value not in GATE_NAMES:
+            raise ValueError(f"unsupported gate '{value}'")
+        return value
+
     @field_validator("qubits", "clbits")
     @classmethod
     def indices_must_be_non_negative(cls, value: list[int]) -> list[int]:
@@ -82,62 +68,43 @@ class CircuitOperation(BaseModel):
 
     @model_validator(mode="after")
     def validate_gate_shape(self) -> "CircuitOperation":
-        single_qubit = {"x", "y", "z", "h", "s", "t"}
-        rotations = {"rx", "ry", "rz"}
-        two_qubit = {"cx", "cz", "swap"}
+        spec = get_gate_spec(self.gate)
+        if not spec.accepts_qubit_count(len(self.qubits)):
+            if self.gate == "unitary" and spec.max_qubits is not None and len(self.qubits) > spec.max_qubits:
+                raise ValueError(f"unitary supports at most {spec.max_qubits} qubits")
+            expected = (
+                str(spec.min_qubits)
+                if spec.max_qubits == spec.min_qubits
+                else f"at least {spec.min_qubits}" if spec.max_qubits is None
+                else f"{spec.min_qubits}..{spec.max_qubits}"
+            )
+            raise ValueError(f"{self.gate} requires {expected} qubit(s)")
+        if len(self.clbits) != spec.clbits:
+            if spec.clbits == 0 and self.clbits:
+                raise ValueError(f"{self.gate} does not accept classical bits")
+            raise ValueError(f"{self.gate} requires {spec.clbits} classical bit(s)")
 
-        if self.gate in single_qubit:
-            self._expect_shape(1, 0)
-            self._expect_no_params()
-        elif self.gate in rotations:
-            self._expect_shape(1, 0)
-            if set(self.params) != {"theta"}:
-                raise ValueError(f"{self.gate} requires exactly one 'theta' parameter")
-            theta = self.params["theta"]
-            if isinstance(theta, bool) or not isinstance(theta, (int, float)):
-                raise ValueError("theta must be a number in radians")
-            if not math.isfinite(float(theta)):
-                raise ValueError("theta must be finite")
-        elif self.gate in two_qubit:
-            self._expect_shape(2, 0)
-            self._expect_no_params()
-        elif self.gate == "measure":
-            self._expect_shape(1, 1)
-            self._expect_no_params()
-        elif self.gate == "barrier":
-            if not self.qubits:
-                raise ValueError("barrier requires at least one qubit")
-            if self.clbits:
-                raise ValueError("barrier does not accept classical bits")
-            self._expect_no_params()
-        elif self.gate == "unitary":
-            self._expect_no_params()
-            if self.clbits:
-                raise ValueError("unitary does not accept classical bits")
-            if not self.qubits:
-                raise ValueError("unitary requires at least one qubit")
-            if len(self.qubits) > MAX_UNITARY_QUBITS:
-                raise ValueError(
-                    f"unitary gates support at most {MAX_UNITARY_QUBITS} qubits "
-                    "-- the matrix doubles in size with every additional qubit"
-                )
+        expected_params = set(spec.parameter_names)
+        if set(self.params) != expected_params:
+            if expected_params:
+                joined = ", ".join(repr(name) for name in spec.parameter_names)
+                raise ValueError(f"{self.gate} requires exactly these parameters: {joined}")
+            raise ValueError(f"{self.gate} does not accept parameters")
+        for name in spec.parameter_names:
+            raw = self.params[name]
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise ValueError(f"{name} must be a number in radians")
+            if not math.isfinite(float(raw)):
+                raise ValueError(f"{name} must be finite")
+
+        if self.gate == "unitary":
             self._validate_matrix()
 
         if self.gate != "unitary" and self.matrix is not None:
             raise ValueError(f"{self.gate} does not accept a matrix field")
+        if self.gate != "unitary" and self.label is not None:
+            raise ValueError(f"{self.gate} does not accept a label field")
         return self
-
-    def _expect_shape(self, qubits: int, clbits: int) -> None:
-        if len(self.qubits) != qubits or len(self.clbits) != clbits:
-            raise ValueError(
-                f"{self.gate} requires {qubits} qubit(s) and {clbits} classical bit(s)"
-            )
-        if self.gate in {"cx", "cz", "swap"} and self.qubits[0] == self.qubits[1]:
-            raise ValueError(f"{self.gate} requires two different qubits")
-
-    def _expect_no_params(self) -> None:
-        if self.params:
-            raise ValueError(f"{self.gate} does not accept parameters")
 
     def _validate_matrix(self) -> None:
         expected = 2 ** len(self.qubits)

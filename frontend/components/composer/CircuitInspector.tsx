@@ -5,19 +5,34 @@
 // editable fields the moment something is selected on the canvas. Replaces
 // the old permanently-visible CircuitSettings + SelectedGateDetails split.
 import { ArrowLeftRight, Copy, Layers, Move, Pencil, Trash2 } from "lucide-react";
-import { Badge, Button, NumberInput, SelectField, StatusNotice } from "@/components/ui/primitives";
+import { useEffect, useState } from "react";
+import { Badge, Button, SelectField, StatusNotice } from "@/components/ui/primitives";
 import { gridRenderState } from "@/lib/circuitSizing";
 import type { SimulationPath } from "@/lib/circuitRouting";
 import { LIMITS, SHOT_OPTIONS } from "@/lib/constants";
 import { isExpandable, type CustomDefinition } from "@/lib/customGates";
 import type { CircuitAnalysis } from "@/lib/labTypes";
-import { ROTATION_GATES, TWO_QUBIT_GATES, type BuiltinGateName, type CircuitOperation, type GateName } from "@/lib/types";
-import { GATE_DEFINITIONS } from "./GateDock";
+import type { CircuitOperation, GateName } from "@/lib/types";
+import { BUILTIN_GATE_NAMES, GATE_DEFINITIONS, gateControlCount, type BuiltinGateName, type GateParameterSpec } from "@/lib/gateRegistry";
+import { parseParameterExpression } from "@/lib/parameterExpression";
 import { StatePreviewPanel } from "./StatePreviewPanel";
 import type { CircuitData } from "@/lib/types";
 
-const SINGLE_QUBIT_FAMILY: GateName[] = ["x", "y", "z", "h", "s", "t"];
-const ROTATION_FAMILY: GateName[] = ["rx", "ry", "rz"];
+function ParameterEditor({ spec, value, onChange }: { spec: GateParameterSpec; value: number; onChange: (value: number) => void }) {
+  const [text, setText] = useState(String(value));
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setText(String(value)), [value]);
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium text-ink-500" htmlFor={`parameter-${spec.name}`}>{spec.label} ({spec.name})</label>
+      <input id={`parameter-${spec.name}`} value={text} onChange={(event) => { setText(event.target.value); setError(null); }}
+        onBlur={() => { try { const next = parseParameterExpression(text); onChange(next); setText(String(next)); setError(null); } catch (reason) { setError(reason instanceof Error ? reason.message : "Invalid expression."); } }}
+        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} aria-invalid={Boolean(error)} placeholder="pi/2"
+        className="min-h-9 w-full rounded-md border border-line-hairline bg-surface-sunken px-2 font-mono text-sm text-ink-900 outline-none focus:border-accent-500" />
+      <p className={`mt-1 text-[10px] ${error ? "text-danger-text" : "text-ink-500"}`}>{error ?? `${spec.description}. Current: ${(value / Math.PI).toFixed(3)}π`}</p>
+    </div>
+  );
+}
 
 function NumberStepper({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
   const id = `inspector-${label.toLowerCase().replace(/\s+/g, "-")}`;
@@ -44,7 +59,7 @@ export function CircuitInspector({
   onClbitsChange,
   onColumnsChange,
   onShotsChange,
-  onThetaChange,
+  onParameterChange,
   onDeleteSelected,
   onDuplicateSelected,
   onMoveSelected,
@@ -66,7 +81,7 @@ export function CircuitInspector({
   onClbitsChange: (value: number) => void;
   onColumnsChange: (value: number) => void;
   onShotsChange: (value: number) => void;
-  onThetaChange: (value: number) => void;
+  onParameterChange: (name: string, value: number) => void;
   onDeleteSelected: () => void;
   onDuplicateSelected: () => void;
   /** Enters keyboard move mode on the canvas (arrow keys slide a preview, Enter confirms). */
@@ -93,8 +108,14 @@ export function CircuitInspector({
       ? { label: customDefinition?.label ?? "?", name: customDefinition?.name ?? "Custom gate", description: customDefinition?.description ?? "This instance's definition is no longer in the library — it can be deleted, but not simulated or expanded." }
       : GATE_DEFINITIONS[selectedOperation.gate];
     const isCustom = selectedOperation.gate === "custom";
-    const isRotation = !isCustom && ROTATION_GATES.includes(selectedOperation.gate);
-    const theta = typeof selectedOperation.params.theta === "number" ? selectedOperation.params.theta : 0;
+    const builtin = !isCustom && selectedOperation.gate !== "unitary" ? selectedOperation.gate as BuiltinGateName : null;
+    const parameterSpecs = builtin ? GATE_DEFINITIONS[builtin].parameters : [];
+    const replacementCandidates = builtin
+      ? BUILTIN_GATE_NAMES.filter((gate) => gate !== builtin
+        && GATE_DEFINITIONS[gate].operationKind === GATE_DEFINITIONS[builtin].operationKind
+        && GATE_DEFINITIONS[gate].minQubits === GATE_DEFINITIONS[builtin].minQubits
+        && GATE_DEFINITIONS[gate].maxQubits === GATE_DEFINITIONS[builtin].maxQubits)
+      : [];
     return (
       <div className="flex h-full flex-col overflow-y-auto rounded-xl2 border border-line bg-surface p-4 shadow-floating">
         <p className="eyebrow">Selected operation</p>
@@ -109,19 +130,9 @@ export function CircuitInspector({
           qubit{selectedOperation.qubits.length > 1 ? "s" : ""} {selectedOperation.qubits.map((q) => `q${q}`).join(" → ")}
           {selectedOperation.clbits.length > 0 && ` · c${selectedOperation.clbits.join(",")}`} · t{selectedOperation.moment}
         </p>
-        {isRotation && (
-          <div className="mt-4">
-            <NumberInput
-              id="rotation-theta"
-              label="Rotation angle θ (radians)"
-              step="0.1"
-              value={Number.isFinite(theta) ? theta : ""}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                if (Number.isFinite(next)) onThetaChange(next);
-              }}
-              hint={`Current angle: ${theta.toFixed(4)} rad · ${(theta / Math.PI).toFixed(3)}π`}
-            />
+        {parameterSpecs.length > 0 && (
+          <div className="mt-4 space-y-3">
+            {parameterSpecs.map((spec) => <ParameterEditor key={spec.name} spec={spec} value={selectedOperation.params[spec.name] ?? spec.default} onChange={(value) => onParameterChange(spec.name, value)} />)}
           </div>
         )}
         <div className="mt-4 grid grid-cols-2 gap-2 border-t border-line-hairline pt-4">
@@ -158,19 +169,17 @@ export function CircuitInspector({
           )
         )}
 
-        {TWO_QUBIT_GATES.includes(selectedOperation.gate) && selectedOperation.gate !== "swap" && (
+        {builtin && selectedOperation.qubits.length === 2 && gateControlCount(builtin, 2) > 0 && (
           <Button variant="secondary" size="sm" onClick={onSwapEndpoints} className="mt-2 w-full">
             <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" /> Swap control / target
           </Button>
         )}
 
-        {(SINGLE_QUBIT_FAMILY.includes(selectedOperation.gate) || ROTATION_FAMILY.includes(selectedOperation.gate) || TWO_QUBIT_GATES.includes(selectedOperation.gate)) && (
+        {replacementCandidates.length > 0 && (
           <div className="mt-3 border-t border-line-hairline pt-3">
             <p className="eyebrow">Replace with</p>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {(SINGLE_QUBIT_FAMILY.includes(selectedOperation.gate) ? SINGLE_QUBIT_FAMILY : ROTATION_FAMILY.includes(selectedOperation.gate) ? ROTATION_FAMILY : TWO_QUBIT_GATES)
-                .filter((gate): gate is BuiltinGateName => gate !== "custom" && gate !== selectedOperation.gate)
-                .map((gate) => (
+              {replacementCandidates.map((gate) => (
                   <Button key={gate} variant="secondary" size="sm" onClick={() => onReplaceGate(gate)} className="!min-h-8 !px-2.5 font-mono">
                     {GATE_DEFINITIONS[gate].label}
                   </Button>

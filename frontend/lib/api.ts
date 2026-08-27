@@ -7,5 +7,6 @@ export const circuitApi = {
     apiPost<{ valid: boolean; message: string; operation_count: number }>("/circuit/validate", canonicalizeCircuit(circuit)),
   code: (circuit: CircuitData) => apiPost<{ code: string }>("/circuit/qiskit-code", canonicalizeCircuit(circuit)),
   qasm: (circuit: CircuitData) => apiPost<{ qasm: string }>("/circuit/qasm", canonicalizeCircuit(circuit)),
+  qasm3: (circuit: CircuitData) => apiPost<{ qasm: string }>("/circuit/qasm3", canonicalizeCircuit(circuit)),
   simulate: (circuit: CircuitData) => apiPost<SimulationResult>("/circuit/simulate", canonicalizeCircuit(circuit)),
 };

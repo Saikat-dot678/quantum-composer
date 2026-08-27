@@ -5,22 +5,25 @@ import { Button, Panel, SectionHeader } from "@/components/ui/primitives";
 import { CodeBlock } from "@/components/ui/CodeBlock";
 import type { CircuitData } from "@/lib/types";
 
-type OutputTab = "json" | "python" | "qasm";
+type OutputTab = "json" | "python" | "qasm2" | "qasm3";
 
 const TABS: { id: OutputTab; label: string }[] = [
   { id: "json", label: "Circuit JSON" },
   { id: "python", label: "Qiskit" },
-  { id: "qasm", label: "OpenQASM" },
+  { id: "qasm2", label: "OpenQASM 2" },
+  { id: "qasm3", label: "OpenQASM 3" },
 ];
 
-export function CodePanel({ circuit, code, qasm }: { circuit: CircuitData; code: string; qasm: string }) {
+export function CodePanel({ circuit, code, qasm, qasm3 }: { circuit: CircuitData; code: string; qasm: string; qasm3: string }) {
   const [tab, setTab] = useState<OutputTab>("json");
   const panelId = useId();
   const content = tab === "json"
     ? JSON.stringify(circuit, null, 2)
     : tab === "python"
       ? code || "# Generate outputs or run the circuit to view Qiskit code."
-      : qasm || "// Generate outputs or run the circuit to view OpenQASM.";
+      : tab === "qasm2"
+        ? qasm || "// Generate outputs or run the circuit to view OpenQASM 2."
+        : qasm3 || "// Generate outputs or run the circuit to view OpenQASM 3.";
 
   return (
     <Panel className="min-w-0 p-4 sm:p-5">

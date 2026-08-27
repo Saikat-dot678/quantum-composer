@@ -13,24 +13,31 @@ import math
 from typing import Any, Iterable
 
 from analysis.resource_estimator import estimate_resources, feasibility_from_log2_bytes
+from gate_registry import get_gate_spec
 from validators import canonical_operation_order
 
-# Gates that are always Clifford in our gate set.
-_CLIFFORD_GATES = {"x", "y", "z", "h", "s", "cx", "cz", "swap"}
-# Structural / classical operations that do not affect Clifford-ness.
-_STRUCTURAL_GATES = {"measure", "barrier"}
-_TWO_QUBIT_GATES = {"cx", "cz", "swap"}
-_ROTATION_GATES = {"rx", "ry", "rz"}
-
-# Tolerance for deciding whether a rotation angle is a multiple of pi/2 (which
-# would make the rotation a Clifford gate up to global phase).
+# Tolerance for deciding whether a parameter lies on a Clifford-compatible
+# angle.  Pauli rotations (RX/RY/RZ/P and RXX/RYY/RZZ/RZX) are Clifford at
+# multiples of pi/2; controlled rotations are Clifford only at multiples of pi.
 _ANGLE_TOL = 1e-9
 
 
-def _rotation_is_clifford(theta: float) -> bool:
-    """A rotation is Clifford only for angles that are integer multiples of pi/2."""
-    ratio = theta / (math.pi / 2.0)
+def _angle_is_multiple(theta: float, period: float) -> bool:
+    ratio = theta / period
     return abs(ratio - round(ratio)) < _ANGLE_TOL
+
+
+def _operation_is_clifford(operation: Any) -> bool:
+    spec = get_gate_spec(operation.gate)
+    if spec.clifford_rule == "always":
+        return True
+    if spec.clifford_rule == "pauli_rotation":
+        return _angle_is_multiple(float(operation.params["theta"]), math.pi / 2.0)
+    if spec.clifford_rule == "controlled_rotation":
+        return _angle_is_multiple(float(operation.params["theta"]), math.pi)
+    if spec.clifford_rule == "mcx":
+        return len(operation.qubits) == 2
+    return False
 
 
 def _greedy_depth(operations: Iterable[Any], num_qubits: int) -> int:
@@ -69,33 +76,32 @@ def analyze_circuit(
     t_count = 0
     rotation_count = 0
     non_clifford_reasons: list[str] = []
+    stim_compatible = True
 
     for op in operations:
         gate = op.gate
+        spec = get_gate_spec(gate)
         gate_counts[gate] = gate_counts.get(gate, 0) + 1
 
-        if gate in _TWO_QUBIT_GATES:
+        if spec.is_unitary and len(op.qubits) == 2:
             two_qubit_gate_count += 1
         if gate == "measure":
             measurement_count += 1
-        if gate == "t":
+        if gate in {"t", "tdg"}:
             t_count += 1
-            non_clifford_reasons.append("T gate")
-        if gate in _ROTATION_GATES:
+        if spec.is_parameterized:
             rotation_count += 1
-            theta = float(op.params.get("theta", 0.0))
-            if not _rotation_is_clifford(theta):
-                non_clifford_reasons.append(f"{gate}({theta:.4f}) is a non-Clifford angle")
-        if gate == "unitary":
-            # A matrix-defined custom gate is never classified as Clifford
-            # here -- doing so would need symbolic Clifford-group membership
-            # testing on an arbitrary matrix, which this structural analyzer
-            # deliberately does not attempt (out of scope; see
-            # docs/CUSTOM_GATES.md). Decomposition/composite custom gates
-            # never reach this point as "unitary" -- the frontend resolver
-            # flattens them into the built-in gates above first, so a Bell
-            # or GHZ macro is still correctly recognized as Clifford here.
-            non_clifford_reasons.append("custom matrix-defined (unitary) gate")
+        if not _operation_is_clifford(op):
+            if gate == "unitary":
+                reason = "custom matrix-defined (unitary) gate"
+            elif spec.is_parameterized:
+                rendered = ", ".join(f"{name}={float(op.params[name]):.4f}" for name in spec.parameter_names)
+                reason = f"{gate}({rendered}) is not structurally recognized as Clifford"
+            else:
+                reason = f"{spec.display_name} gate"
+            non_clifford_reasons.append(reason)
+        if spec.stim_instruction is None:
+            stim_compatible = False
 
     contains_non_clifford = bool(non_clifford_reasons)
     is_clifford = not contains_non_clifford
@@ -117,7 +123,7 @@ def analyze_circuit(
     warnings: list[str] = []
 
     if is_clifford:
-        if stim_available:
+        if stim_available and stim_compatible:
             recommended.append("stim_stabilizer")
         recommended.append("aer_stabilizer")
 
@@ -160,9 +166,9 @@ def analyze_circuit(
             "simulation (Stim or Aer 'stabilizer'), which scales polynomially "
             "instead of storing an exponential statevector."
         )
-    if rotation_count and any("non-Clifford angle" in r for r in non_clifford_reasons):
+    if rotation_count and contains_non_clifford:
         warnings.append(
-            "Circuit contains rotation gates at non-Clifford angles; stabilizer "
+            "Circuit contains parameterized gates at non-Clifford angles; stabilizer "
             "engines cannot run it."
         )
     if measurement_count == 0:
@@ -196,4 +202,7 @@ def analyze_circuit(
         "warnings": warnings,
         "feasibility_status": feasibility_status,
         "resource_estimate": resources,
+        # Internal routing hint. The public Pydantic response intentionally
+        # omits this implementation detail.
+        "stim_compatible": stim_compatible,
     }

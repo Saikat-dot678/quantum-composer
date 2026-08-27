@@ -14,7 +14,9 @@ honest about the hard limits of classical simulation.
 
 ### Composer
 - A real spatial circuit editor: a pannable/zoomable SVG canvas (not a DOM
-  grid) with X, Y, Z, H, S, T, RX/RY/RZ, CX, CZ, SWAP, Measure, and Barrier,
+  grid) with a registry-driven gate library: identity/Pauli/phase roots and
+  daggers, P/RX/RY/RZ/U, controlled and multi-controlled gates, SWAP/iSWAP,
+  DCX/ECR, Toffoli/Fredkin, XX/YY/ZZ/ZX interactions, Measure, Reset, and scoped Barrier,
   a floating searchable gate dock, drag-from-dock-to-wire placement (click
   placement remains the accessible baseline — dragging is never the only way
   to place a gate), a bird's-eye minimap for large circuits, and a contextual
@@ -45,11 +47,14 @@ honest about the hard limits of classical simulation.
   Clifford), and matrix gates become a Qiskit `UnitaryGate`. Shared links and
   exported/imported circuit JSON embed the custom definitions they reference,
   so they round-trip to a browser that has never seen them before.
-- Circuit JSON, generated Qiskit code, OpenQASM 2, counts histogram, depth, gate
+- Circuit JSON, generated Qiskit code, OpenQASM 2 and 3, counts histogram, depth, gate
   counts, and a zoomable Qiskit Matplotlib SVG circuit diagram, docked in a collapsible bottom sheet that
   auto-expands after a run. The V1 code/QASM/exact path remains limited to
   8 qubits, 8 classical bits, 200 operations, and 8,192 shots; circuits outside
   that envelope use the V2 simulator path and retain JSON output.
+- Gate parameters accept safe arithmetic expressions such as `pi/2`, `-3π/4`,
+  and `(pi + 0.1)/2`; expressions are parsed without `eval`. Project import
+  accepts validated JSON plus OpenQASM 2/3, while Python source remains rejected.
 - **Live instruments:** the floating toolbar shows the active circuit's
   qubit/op count and route as you edit; for circuits up to 5 qubits the
   inspector renders a local ideal-state preview (basis probabilities, phases,

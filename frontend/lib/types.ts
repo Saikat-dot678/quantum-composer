@@ -1,5 +1,7 @@
 import type { ComplexPair } from "./customGates";
 import type { CircuitDiagramPayload } from "./circuitDiagram";
+import type { BuiltinGateName } from "./gateRegistry";
+export type { BuiltinGateName } from "./gateRegistry";
 
 // "custom" is a placed instance of a user-defined gate/operation (see
 // lib/customGates.ts) — `customId` then points at the library definition.
@@ -14,7 +16,6 @@ import type { CircuitDiagramPayload } from "./circuitDiagram";
 // through save/share — CircuitOperation carries the fields for it only so a
 // ResolvedCircuit (lib/customGateResolve.ts) can be passed anywhere a
 // CircuitData is expected without a conversion step.
-export type BuiltinGateName = "x" | "y" | "z" | "h" | "s" | "t" | "rx" | "ry" | "rz" | "cx" | "cz" | "swap" | "measure" | "barrier";
 export type GateName = BuiltinGateName | "custom" | "unitary";
 export interface CircuitOperation {
   gate: GateName;
@@ -32,5 +33,3 @@ export interface CircuitOperation {
 export interface CircuitData { num_qubits: number; num_clbits: number; shots: number; operations: CircuitOperation[] }
 export interface SimulationResult { counts: Record<string, number>; depth: number; gate_counts: Record<string, number>; diagram: string; circuit_diagram: CircuitDiagramPayload | null; warnings: string[] }
 export interface Preset { id: string; name: string; description: string; circuit: CircuitData }
-export const TWO_QUBIT_GATES: GateName[] = ["cx", "cz", "swap"];
-export const ROTATION_GATES: GateName[] = ["rx", "ry", "rz"];

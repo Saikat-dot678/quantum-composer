@@ -11,6 +11,7 @@ from typing import Any, Sequence
 
 from circuit_builder import QuantumDependencyError, apply_operations, build_circuit, empty_circuit, ordered_operation_list
 from engines.base import EngineNotAvailableError
+from gate_registry import GATE_REGISTRY
 
 STATE_SAVE_LABEL = "quantum_composer_state"
 
@@ -46,13 +47,11 @@ def prepare_circuit(request: Any) -> tuple[Any, list[str]]:
 # ---------------------------------------------------------------------------
 # Post-simulation state extraction
 #
-# `measure` is the only non-unitary operation this schema supports today, so
-# "does this circuit have a single well-defined pre-measurement pure state"
-# reduces exactly to "does any non-barrier operation touch a qubit after
-# that qubit's own measurement" -- precisely decidable from the operation
-# list alone, no simulation needed. If custom gates are ever extended with a
-# reset/conditional primitive, this is the function that would need to grow
-# a case for it.
+# Measurement and reset are non-unitary. A density-matrix run can represent a
+# reset channel exactly; pure-state/stabilizer extraction cannot generally do
+# so after resetting one half of an entangled state, because the remaining
+# state is mixed. This structural pass lets each engine make that distinction
+# before asking Aer to materialize a misleading single trajectory.
 # ---------------------------------------------------------------------------
 
 
@@ -62,9 +61,12 @@ def analyze_measurement_structure(operations: Sequence[Any]) -> dict[str, Any]:
     ordered = canonical_operation_order(list(operations))
     measured_qubits: set[int] = set()
     mid_circuit = False
+    has_reset = False
     for operation in ordered:
         if operation.gate == "barrier":
             continue
+        if operation.gate == "reset":
+            has_reset = True
         if operation.gate == "measure":
             measured_qubits.add(operation.qubits[0])
             continue
@@ -74,6 +76,7 @@ def analyze_measurement_structure(operations: Sequence[Any]) -> dict[str, Any]:
         "mid_circuit": mid_circuit,
         "measured_qubits": measured_qubits,
         "has_measurements": bool(measured_qubits),
+        "has_reset": has_reset,
     }
 
 
@@ -134,6 +137,7 @@ def run_aer_with_state(
     save_instruction: str,
     max_state_qubits: int,
     no_measurement_semantic_point: str = "final_state",
+    allow_reset_state: bool = False,
 ) -> StateCapableRun:
     """Like `run_aer`, but optionally inserts a save instruction so the same
     execution also yields a raw state for post-processing.
@@ -159,7 +163,14 @@ def run_aer_with_state(
         )
     else:
         structure = analyze_measurement_structure(request.operations)
-        if structure["mid_circuit"]:
+        if structure["has_reset"] and not allow_reset_state:
+            state_unavailable_reason = (
+                "This circuit contains reset, a non-unitary discard-and-prepare channel. "
+                "A pure statevector or stabilizer trajectory would not represent the mixed "
+                "state produced when an entangled qubit is reset; use the density-matrix "
+                "engine to inspect the post-reset state."
+            )
+        elif structure["mid_circuit"]:
             state_unavailable_reason = (
                 "A single deterministic pure quantum state is not available because this circuit "
                 "measures a qubit and then continues operating on it -- the state after a mid-circuit "
@@ -287,8 +298,16 @@ def build_depolarizing_noise_model(
     from qiskit_aer.noise import NoiseModel, depolarizing_error
 
     model = NoiseModel()
-    one_qubit_gates = ["id", "x", "y", "z", "h", "s", "sdg", "t", "tdg", "rx", "ry", "rz"]
-    two_qubit_gates = ["cx", "cz", "swap"]
+    one_qubit_gates = [
+        spec.qiskit_method
+        for spec in GATE_REGISTRY.values()
+        if spec.is_unitary and spec.min_qubits == spec.max_qubits == 1 and spec.qiskit_method
+    ]
+    two_qubit_gates = [
+        spec.qiskit_method
+        for spec in GATE_REGISTRY.values()
+        if spec.is_unitary and spec.min_qubits == spec.max_qubits == 2 and spec.qiskit_method
+    ]
     if one_qubit_p > 0:
         err1 = depolarizing_error(min(max(one_qubit_p, 0.0), 1.0), 1)
         model.add_all_qubit_quantum_error(err1, one_qubit_gates)

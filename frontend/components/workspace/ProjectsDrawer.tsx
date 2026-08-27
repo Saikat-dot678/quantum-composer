@@ -7,12 +7,36 @@ import { localCustomGateRepository } from "@/lib/customGateRepository";
 import { collectReferencedDefinitions } from "@/lib/customGateResolve";
 import { listProjects, MAX_PROJECT_OPERATIONS, type Project } from "@/lib/projects";
 import type { CircuitData } from "@/lib/types";
+import { hardwareApi } from "@/lib/hardwareApi";
+import { BUILTIN_GATE_SET, GATE_DEFINITIONS, type BuiltinGateName } from "@/lib/gateRegistry";
 import { Button } from "@/components/ui/primitives";
 import { useToast } from "./ToastProvider";
 import { useWorkspace } from "./WorkspaceProvider";
 import { ModalPortal, useModalLifecycle } from "./Modal";
 
 const CIRCUIT_BUNDLE_FORMAT = "quantum-composer-circuit";
+
+function circuitFromQasmImport(normalized: Record<string, unknown>, shots: number): CircuitData | null {
+  if (!Number.isInteger(normalized.num_qubits) || !Number.isInteger(normalized.num_clbits) || !Array.isArray(normalized.operations)) return null;
+  const operations = normalized.operations.map((raw) => {
+    if (!raw || typeof raw !== "object") return null;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.gate !== "string" || !BUILTIN_GATE_SET.has(item.gate) || !Array.isArray(item.qubits) || !Array.isArray(item.clbits) || !Array.isArray(item.params)) return null;
+    const gate = item.gate as BuiltinGateName;
+    const definition = GATE_DEFINITIONS[gate];
+    if (item.params.length !== definition.parameters.length || item.params.some((value) => typeof value !== "number" || !Number.isFinite(value))) return null;
+    const params = item.params as number[];
+    return {
+      gate,
+      qubits: item.qubits as number[],
+      clbits: item.clbits as number[],
+      params: Object.fromEntries(definition.parameters.map((parameter, index) => [parameter.name, params[index]])),
+      moment: Number.isInteger(item.sequence) ? item.sequence as number : 0,
+    };
+  });
+  if (operations.some((operation) => operation === null)) return null;
+  return validateCircuitData({ num_qubits: normalized.num_qubits, num_clbits: normalized.num_clbits, shots, operations }, { maxOperations: MAX_PROJECT_OPERATIONS });
+}
 
 function remapCustomIds(circuit: CircuitData, idMap: Record<string, string>): CircuitData {
   return {
@@ -119,7 +143,19 @@ export function ProjectsDrawer({ open, onClose }: { open: boolean; onClose: () =
       return;
     }
     try {
-      const parsed = JSON.parse(await file.text()) as unknown;
+      const text = await file.text();
+      if (!file.name.toLowerCase().endsWith(".json")) {
+        const kind = /^\s*OPENQASM\s+3(?:\.\d+)?/i.test(text) || file.name.toLowerCase().endsWith(".qasm3") ? "qasm3" : "qasm2";
+        const imported = await hardwareApi.importCircuit({ kind, text });
+        const circuit = imported.normalized ? circuitFromQasmImport(imported.normalized, workspace.circuit.shots) : null;
+        if (!circuit) { notifyFailure("The QASM parsed, but contains instructions or parameters the Composer cannot edit safely."); return; }
+        workspace.detachProject();
+        workspace.loadCircuit(circuit);
+        pushToast(`Imported ${file.name}: ${circuit.num_qubits} qubits and ${circuit.operations.length} operations.`, "success");
+        onClose();
+        return;
+      }
+      const parsed = JSON.parse(text) as unknown;
       const isBundle = typeof parsed === "object" && parsed !== null && (parsed as { format?: unknown }).format === CIRCUIT_BUNDLE_FORMAT;
       const rawCircuit = isBundle ? (parsed as { circuit?: unknown }).circuit : parsed;
       const circuit = validateCircuitData(rawCircuit, { maxOperations: MAX_PROJECT_OPERATIONS });
@@ -149,8 +185,8 @@ export function ProjectsDrawer({ open, onClose }: { open: boolean; onClose: () =
       workspace.loadCircuit(finalCircuit);
       pushToast(`Imported ${file.name}: ${finalCircuit.num_qubits} qubits and ${finalCircuit.operations.length} operations.`, "success");
       onClose();
-    } catch {
-      notifyFailure("That file is not valid JSON.");
+    } catch (error) {
+      notifyFailure(error instanceof Error ? error.message : "That circuit file could not be imported.");
     }
   }
 
@@ -210,14 +246,14 @@ export function ProjectsDrawer({ open, onClose }: { open: boolean; onClose: () =
               )}
               <div className="mt-3 flex flex-wrap gap-2 border-t border-lab-border pt-3">
                 <Button variant="quiet" size="sm" onClick={exportCircuit}>Export JSON</Button>
-                <Button variant="quiet" size="sm" onClick={() => fileInputRef.current?.click()}>Import JSON</Button>
+                <Button variant="quiet" size="sm" onClick={() => fileInputRef.current?.click()}>Import JSON / QASM</Button>
                 {workspace.activeProjectId && <Button variant="quiet" size="sm" onClick={() => { workspace.detachProject(); pushToast("Detached from the project; this circuit now autosaves anonymously."); }}>Detach</Button>}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="application/json,.json"
+                  accept="application/json,.json,.qasm,.qasm2,.qasm3,text/plain"
                   className="sr-only"
-                  aria-label="Import circuit JSON"
+                  aria-label="Import circuit JSON or OpenQASM"
                   onChange={(event) => {
                     const file = event.target.files?.[0];
                     if (file) void importCircuit(file);

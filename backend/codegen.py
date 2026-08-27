@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from gate_registry import get_gate_spec
 from schemas import CircuitRequest
 from validators import canonical_operation_order
 
@@ -22,22 +23,24 @@ def generate_qiskit_code(request: CircuitRequest) -> str:
     has_measurement = False
     has_unitary = False
     for operation in canonical_operation_order(request.operations):
-        gate = operation.gate
+        spec = get_gate_spec(operation.gate)
         q = operation.qubits
-        if gate in {"x", "y", "z", "h", "s", "t"}:
-            body.append(f"circuit.{gate}({q[0]})")
-        elif gate in {"rx", "ry", "rz"}:
-            body.append(
-                f"circuit.{gate}({_number(operation.params['theta'])}, {q[0]})"
-            )
-        elif gate in {"cx", "cz", "swap"}:
-            body.append(f"circuit.{gate}({q[0]}, {q[1]})")
-        elif gate == "measure":
+        if spec.application == "direct":
+            args = [_number(operation.params[name]) for name in spec.parameter_names]
+            args.extend(map(str, q))
+            body.append(f"circuit.{spec.qiskit_method}({', '.join(args)})")
+        elif spec.application == "measure":
             has_measurement = True
             body.append(f"circuit.measure({q[0]}, {operation.clbits[0]})")
-        elif gate == "barrier":
+        elif spec.application == "reset":
+            body.append(f"circuit.reset({q[0]})")
+        elif spec.application == "barrier":
             body.append(f"circuit.barrier({', '.join(map(str, q))})")
-        elif gate == "unitary":
+        elif spec.application == "mcx":
+            body.append(f"circuit.mcx({q[:-1]!r}, {q[-1]})")
+        elif spec.application == "mcp":
+            body.append(f"circuit.mcp({_number(operation.params['theta'])}, {q[:-1]!r}, {q[-1]})")
+        elif spec.application == "unitary":
             has_unitary = True
             label = operation.label or "U"
             body.append(
@@ -82,4 +85,15 @@ def generate_qasm(circuit) -> str:
     except (ImportError, AttributeError) as exc:
         raise RuntimeError(
             "OpenQASM 2 export is unavailable in the installed Qiskit version."
+        ) from exc
+
+
+def generate_qasm3(circuit) -> str:
+    try:
+        from qiskit import qasm3
+
+        return qasm3.dumps(circuit)
+    except (ImportError, AttributeError) as exc:
+        raise RuntimeError(
+            "OpenQASM 3 export is unavailable in the installed Qiskit version."
         ) from exc

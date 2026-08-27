@@ -7,13 +7,10 @@
 // telemetry and never gates or replaces a real /circuit/analyze call.
 import { LIMITS } from "./constants";
 import { getSimulationPath, type SimulationPath } from "./circuitRouting";
+import { BUILTIN_GATE_SET, GATE_DEFINITIONS, gateIsClifford, type BuiltinGateName } from "./gateRegistry";
 import type { CircuitData } from "./types";
 import type { ResourceRisk } from "./labTypes";
 
-const CLIFFORD_GATES = new Set(["x", "y", "z", "h", "s", "cx", "cz", "swap"]);
-const STRUCTURAL_GATES = new Set(["measure", "barrier"]);
-const ROTATION_GATES = new Set(["rx", "ry", "rz"]);
-const ANGLE_TOLERANCE = 1e-9;
 const LOG2_MB = 20;
 const UNITS = ["bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"] as const;
 
@@ -34,11 +31,6 @@ export interface LocalFeasibility {
   /** Headline matching the backend's feasibility vocabulary. */
   headline: "clifford_scalable" | "exact_feasible" | "exact_borderline" | "approximation_or_hardware";
   route: SimulationPath;
-}
-
-function rotationIsClifford(theta: number): boolean {
-  const ratio = theta / (Math.PI / 2);
-  return Math.abs(ratio - Math.round(ratio)) < ANGLE_TOLERANCE;
 }
 
 export function humanBytesFromLog2(log2Bytes: number): string {
@@ -75,17 +67,17 @@ export function analyzeLocally(circuit: CircuitData): LocalFeasibility {
 
   for (const operation of circuit.operations) {
     const gate = operation.gate;
-    if (gate === "t") {
+    if (gate === "t" || gate === "tdg") {
       tCount += 1;
-      nonClifford = true;
-    } else if (ROTATION_GATES.has(gate)) {
-      rotationCount += 1;
-      const theta = typeof operation.params.theta === "number" ? operation.params.theta : 0;
-      if (!rotationIsClifford(theta)) nonClifford = true;
-    } else if (!CLIFFORD_GATES.has(gate) && !STRUCTURAL_GATES.has(gate)) {
+    }
+    if (BUILTIN_GATE_SET.has(gate)) {
+      const builtin = gate as BuiltinGateName;
+      if (GATE_DEFINITIONS[builtin].parameters.length > 0) rotationCount += 1;
+      if (!gateIsClifford(builtin, operation.params)) nonClifford = true;
+    } else {
       nonClifford = true;
     }
-    if (operation.qubits.length === 2) twoQubitCount += 1;
+    if (operation.qubits.length >= 2) twoQubitCount += 1;
     if (gate === "measure") measurementCount += 1;
   }
 

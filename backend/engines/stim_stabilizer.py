@@ -23,6 +23,7 @@ from engines.base import (
     UnsupportedGateError,
     stim_available,
 )
+from gate_registry import GATE_REGISTRY
 from validators import canonical_operation_order
 
 ENGINE_ID = "stim_stabilizer"
@@ -36,14 +37,9 @@ MAX_SAMPLE_BATCH_CELLS = 1_000_000
 
 # Declarative gate -> Stim instruction name for the supported Clifford subset.
 _STIM_GATES = {
-    "x": "X",
-    "y": "Y",
-    "z": "Z",
-    "h": "H",
-    "s": "S",
-    "cx": "CX",
-    "cz": "CZ",
-    "swap": "SWAP",
+    gate: spec.stim_instruction
+    for gate, spec in GATE_REGISTRY.items()
+    if spec.stim_instruction is not None and gate not in {"measure", "reset", "barrier"}
 }
 
 
@@ -105,11 +101,10 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             f"{reasons}. Stim is not a universal simulator. Use the statevector or "
             "MPS engine for non-Clifford circuits."
         )
-    if analysis.get("rotation_count", 0):
+    if not analysis.get("stim_compatible", False):
         raise UnsupportedGateError(
-            "Stim's direct gate mapping does not accept RX, RY or RZ instructions, "
-            "even when an angle is Clifford-equivalent. Use the Aer stabilizer "
-            "engine for Clifford-angle rotations."
+            "This Clifford circuit contains an operation outside Stim's direct "
+            "mapping. Use the Aer stabilizer engine for this gate set."
         )
 
     stim = _load_stim()
@@ -127,6 +122,8 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
         elif gate == "measure":
             circuit.append("M", [op.qubits[0]])
             measurement_clbits.append(op.clbits[0])
+        elif gate == "reset":
+            circuit.append("R", [op.qubits[0]])
         elif gate == "barrier":
             circuit.append("TICK")
         else:
@@ -192,7 +189,14 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             )
         else:
             structure = analyze_measurement_structure(request.operations)
-            if structure["mid_circuit"]:
+            if structure["has_reset"]:
+                state_analysis = sp.unavailable_state_analysis(
+                    ENGINE_ID,
+                    "A reset is a non-unitary discard-and-prepare channel. Stim samples a valid "
+                    "stabilizer trajectory, but one trajectory is not the circuit's reduced mixed state; "
+                    "use the density-matrix engine to inspect that state.",
+                )
+            elif structure["mid_circuit"]:
                 state_analysis = sp.unavailable_state_analysis(
                     ENGINE_ID,
                     "A single deterministic pure quantum state is not available because this circuit "

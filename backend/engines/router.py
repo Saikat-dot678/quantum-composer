@@ -162,22 +162,21 @@ def choose_engine(analysis: dict[str, Any], options: Any) -> tuple[str, str]:
 
     # 3. Clifford-only -> stabilizer (scales to very large qubit counts).
     if is_clifford:
-        # Stim's direct instruction mapping intentionally excludes rotation
-        # gates, even when an angle is Clifford-equivalent. Aer can handle those
-        # validated Clifford rotations; do not auto-select an incompatible Stim
-        # route merely because the structural analyzer says "Clifford".
-        if stim_available() and analysis.get("rotation_count", 0) == 0:
+        # Stim exposes a strict native subset. The operation registry computes
+        # compatibility independently from Clifford-ness so an otherwise valid
+        # Clifford gate such as ECR routes to Aer rather than failing after
+        # auto-selection.
+        if stim_available() and analysis.get("stim_compatible", False):
             return (
                 "stim_stabilizer",
                 f"Circuit is Clifford-only on {n} qubits; Stim simulates it exactly "
                 "at large scale.",
             )
-        if analysis.get("rotation_count", 0):
+        if stim_available() and not analysis.get("stim_compatible", False):
             return (
                 "aer_stabilizer",
-                f"Circuit is Clifford-only on {n} qubits but contains Clifford-angle "
-                "rotations that Stim's direct mapping does not support; the Aer "
-                "stabilizer method is used.",
+                f"Circuit is Clifford-only on {n} qubits but contains operations "
+                "outside Stim's direct mapping (including parameterized rotations); the Aer stabilizer method is used.",
             )
         return (
             "aer_stabilizer",

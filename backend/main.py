@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from analysis.circuit_analyzer import analyze_circuit
 from circuit_builder import QuantumDependencyError, build_circuit
-from codegen import generate_qasm, generate_qiskit_code
+from codegen import generate_qasm, generate_qasm3, generate_qiskit_code
 from engines.base import (
     EngineNotAvailableError,
     InfeasibleCircuitError,
@@ -133,6 +133,19 @@ def qasm(request: CircuitRequest) -> QasmResponse:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"QASM export failed: {exc}") from exc
+
+
+@app.post("/circuit/qasm3", response_model=QasmResponse)
+def qasm3(request: CircuitRequest) -> QasmResponse:
+    try:
+        circuit = build_circuit(request)
+        return QasmResponse(qasm=generate_qasm3(circuit))
+    except QuantumDependencyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"OpenQASM 3 export failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

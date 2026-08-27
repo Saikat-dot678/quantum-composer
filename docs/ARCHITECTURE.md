@@ -93,12 +93,22 @@ operation requires `moment` as a strict integer in `0..1,000,000`; missing,
 string, fractional, negative, boolean, NaN, and infinite values are rejected,
 not coerced. A qubit or classical bit cannot be occupied twice in one moment.
 
-| Gate | Shape | Qiskit mapping |
+The frontend and backend each expose a central declarative gate registry
+(`frontend/lib/gateRegistry.ts` and `backend/gate_registry.py`). Schema
+validation, palette/inspector metadata, matrices, Qiskit construction, code
+generation, analysis, and Stim routing derive from these registries; tests
+cross-check every public entry.
+
+| Gate family | Shape | Qiskit mapping |
 | --- | --- | --- |
-| `x y z h s t` | one qubit | `circuit.<gate>(q)` |
-| `rx ry rz` | one qubit + numeric theta | `circuit.<gate>(theta, q)` |
-| `cx cz swap` | two distinct qubits | `circuit.<gate>(q0, q1)` |
+| `id x y z h sx sxdg s sdg t tdg` | one qubit | `circuit.<gate>(q)` |
+| `p rx ry rz` | one qubit + numeric theta | `circuit.<gate>(theta, q)` |
+| `u` | one qubit + theta/phi/lam | `circuit.u(theta, phi, lam, q)` |
+| `cx cy cz ch cp crx cry crz swap iswap dcx ecr rxx ryy rzz rzx` | two distinct qubits | direct Qiskit methods |
+| `ccx cswap` | three distinct qubits | direct Qiskit methods |
+| `mcx mcp` | two or more distinct qubits, controls first and final target last | `circuit.mcx/mcp(...)` |
 | `measure` | one qubit + one clbit | `circuit.measure(q, c)` |
+| `reset` | one qubit | `circuit.reset(q)` |
 | `barrier` | one or more qubits | `circuit.barrier(*qubits)` |
 
 ## V1 simulation and code generation
@@ -108,7 +118,7 @@ qubits, and returns a warning. Reported depth and counts describe the submitted
 user circuit. The normalized response includes `counts`, `depth`,
 `gate_counts`, optional typed `circuit_diagram`, legacy `diagram`, and
 `warnings`. `codegen.py` returns Qiskit Python as
-text or serializes the validated circuit as OpenQASM; generated Python is never
+text or serializes the validated circuit as OpenQASM 2 or 3; generated Python is never
 executed by the API.
 
 ## Circuit visualization pipeline

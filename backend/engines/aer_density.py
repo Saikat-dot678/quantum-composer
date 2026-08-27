@@ -95,6 +95,7 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
         save_instruction="save_density_matrix",
         max_state_qubits=MAX_DENSITY_MATRIX_ANALYSIS_QUBITS,
         no_measurement_semantic_point="mixed_final_state",
+        allow_reset_state=True,
     )
     warnings.extend(run_result.warnings)
 

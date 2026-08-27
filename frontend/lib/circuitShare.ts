@@ -9,12 +9,10 @@ import { normalizeCustomDefinition, validateDefinition } from "./customGateValid
 import { LIMITS } from "./constants";
 import { canonicalOperationOrder } from "./circuitOrdering";
 import type { CircuitData, CircuitOperation, GateName } from "./types";
+import { BUILTIN_GATE_NAMES, BUILTIN_GATE_SET, validateBuiltinOperation, type BuiltinGateName } from "./gateRegistry";
 
-const GATES = ["x", "y", "z", "h", "s", "t", "rx", "ry", "rz", "cx", "cz", "swap", "measure", "barrier"] as const;
-const GATE_SET: ReadonlySet<string> = new Set(GATES);
-const SINGLE_QUBIT = new Set<GateName>(["x", "y", "z", "h", "s", "t"]);
-const ROTATIONS = new Set<GateName>(["rx", "ry", "rz"]);
-const TWO_QUBIT = new Set<GateName>(["cx", "cz", "swap"]);
+const GATES = BUILTIN_GATE_NAMES;
+const GATE_SET: ReadonlySet<string> = BUILTIN_GATE_SET;
 const GATE_TO_INDEX = new Map<GateName, number>(GATES.map((gate, index) => [gate, index]));
 const MAX_CUSTOM_ID_LENGTH = 128;
 
@@ -110,7 +108,7 @@ function normalizeOperation(value: unknown, maxMoment: number): CircuitOperation
   const qubits = value.qubits as number[];
   const clbits = value.clbits as number[];
   const paramKeys = Object.keys(value.params);
-  let params: Record<string, number> = {};
+  const params: Record<string, number> = {};
 
   if (isCustom) {
     if (typeof value.customId !== "string" || !value.customId || value.customId.length > MAX_CUSTOM_ID_LENGTH) return null;
@@ -123,20 +121,12 @@ function normalizeOperation(value: unknown, maxMoment: number): CircuitOperation
     return { gate, qubits: [...qubits], clbits: [...clbits], params, moment: value.moment as number, customId: value.customId };
   }
 
-  if (SINGLE_QUBIT.has(gate)) {
-    if (qubits.length !== 1 || clbits.length !== 0 || paramKeys.length !== 0) return null;
-  } else if (ROTATIONS.has(gate)) {
-    if (qubits.length !== 1 || clbits.length !== 0 || paramKeys.length !== 1 || paramKeys[0] !== "theta") return null;
-    const theta = value.params.theta;
-    if (typeof theta !== "number" || !Number.isFinite(theta)) return null;
-    params = { theta };
-  } else if (TWO_QUBIT.has(gate)) {
-    if (qubits.length !== 2 || qubits[0] === qubits[1] || clbits.length !== 0 || paramKeys.length !== 0) return null;
-  } else if (gate === "measure") {
-    if (qubits.length !== 1 || clbits.length !== 1 || paramKeys.length !== 0) return null;
-  } else if (gate === "barrier") {
-    if (qubits.length < 1 || clbits.length !== 0 || paramKeys.length !== 0) return null;
+  for (const key of paramKeys) {
+    const raw = value.params[key];
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+    params[key] = raw;
   }
+  if (validateBuiltinOperation(gate as BuiltinGateName, qubits, clbits, params)) return null;
 
   return { gate, qubits: [...qubits], clbits: [...clbits], params, moment: value.moment as number };
 }
@@ -419,15 +409,16 @@ export async function encodeCircuitLinkCompressed(circuit: CircuitData, origin: 
   const validated = validateForShare(circuit);
   if (!validated.ok || !validated.circuit) return { ok: false, reason: validated.reason };
   const usesCustom = validated.circuit.operations.some((operation) => operation.gate === "custom");
+  const needsV3 = usesCustom || validated.circuit.operations.some((operation) => Object.keys(operation.params).some((name) => name !== "theta"));
   if (usesCustom) {
     const bundle = validateCircuitBundle(validated.circuit, definitions);
     if (!bundle.ok) return { ok: false, reason: bundle.reason };
   }
-  if (!supportsCompression()) return usesCustom
-    ? { ok: false, reason: "This browser cannot create a share link for circuits with custom gates (compression is unavailable). Export JSON instead." }
+  if (!supportsCompression()) return needsV3
+    ? { ok: false, reason: "This browser cannot create this versioned share link because compression is unavailable. Export JSON instead." }
     : encodeCircuitLink(validated.circuit, origin);
   try {
-    const payloadObject = usesCustom ? compactCircuitV3(validated.circuit, definitions) : compactCircuit(validated.circuit);
+    const payloadObject = needsV3 ? compactCircuitV3(validated.circuit, definitions) : compactCircuit(validated.circuit);
     const source = new TextEncoder().encode(JSON.stringify(payloadObject));
     const payload = bytesToBase64Url(await compress(source));
     const url = `${origin}/composer?c2=${payload}`;

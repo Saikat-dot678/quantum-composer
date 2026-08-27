@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from gate_registry import get_gate_spec
 from schemas import CircuitOperation, CircuitRequest
 from validators import canonical_operation_order
 
@@ -31,20 +32,23 @@ def apply_operations(circuit: Any, operations: Sequence[CircuitOperation]) -> No
     from qiskit.circuit.library import UnitaryGate
 
     for operation in operations:
-        gate = operation.gate
+        spec = get_gate_spec(operation.gate)
         q = operation.qubits
 
-        if gate in {"x", "y", "z", "h", "s", "t"}:
-            getattr(circuit, gate)(q[0])
-        elif gate in {"rx", "ry", "rz"}:
-            getattr(circuit, gate)(float(operation.params["theta"]), q[0])
-        elif gate in {"cx", "cz", "swap"}:
-            getattr(circuit, gate)(q[0], q[1])
-        elif gate == "measure":
+        if spec.application == "direct":
+            args = [float(operation.params[name]) for name in spec.parameter_names]
+            getattr(circuit, spec.qiskit_method)(*args, *q)
+        elif spec.application == "measure":
             circuit.measure(q[0], operation.clbits[0])
-        elif gate == "barrier":
+        elif spec.application == "reset":
+            circuit.reset(q[0])
+        elif spec.application == "barrier":
             circuit.barrier(*q)
-        elif gate == "unitary":
+        elif spec.application == "mcx":
+            circuit.mcx(q[:-1], q[-1])
+        elif spec.application == "mcp":
+            circuit.mcp(float(operation.params["theta"]), q[:-1], q[-1])
+        elif spec.application == "unitary":
             # q[0] is the least-significant qubit of the matrix's own row/col
             # index -- matches lib/statevector.ts's applyMatrix on the
             # frontend, so the local preview and this backend build agree.

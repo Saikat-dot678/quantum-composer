@@ -21,8 +21,8 @@ import { labApi } from "@/lib/labApi";
 import type { CircuitAnalysis } from "@/lib/labTypes";
 import { checkPlacement } from "@/lib/placement";
 import { PRESETS } from "@/lib/presets";
-import { ROTATION_GATES, TWO_QUBIT_GATES } from "@/lib/types";
 import type { CircuitData, CircuitOperation, GateName, Preset } from "@/lib/types";
+import { GATE_DEFINITIONS, defaultGateParams, type BuiltinGateName } from "@/lib/gateRegistry";
 import { Button } from "@/components/ui/primitives";
 import { useRegisterActions } from "@/components/workspace/ActionRegistry";
 import { ModalPortal, useModalLifecycle } from "@/components/workspace/Modal";
@@ -38,15 +38,17 @@ import { OutputDock } from "./OutputDock";
 import type { ResultView } from "@/components/output/ResultsPanel";
 import type { ComposerBusyAction } from "./types";
 
+const TWO_QUBIT_GATES: GateName[] = (Object.keys(GATE_DEFINITIONS) as BuiltinGateName[])
+  .filter((gate) => GATE_DEFINITIONS[gate].minQubits === 2 && GATE_DEFINITIONS[gate].maxQubits === 2);
+const ROTATION_GATES: GateName[] = (Object.keys(GATE_DEFINITIONS) as BuiltinGateName[])
+  .filter((gate) => GATE_DEFINITIONS[gate].parameters.length === 1 && GATE_DEFINITIONS[gate].parameters[0].name === "theta");
+
 interface Props {
   circuit: CircuitData;
   setCircuit: Dispatch<SetStateAction<CircuitData>>;
   onOpenSimulatorLab: (circuit: CircuitData) => void;
   onOpenHardwareMapping: (circuit: CircuitData) => void;
 }
-
-const removeConflicts = (operations: CircuitOperation[], moment: number, qubits: number[]) =>
-  operations.filter((operation) => operation.moment !== moment || !operation.qubits.some((qubit) => qubits.includes(qubit)));
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 
@@ -87,6 +89,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
   const [selectedCell, setSelectedCell] = useState<CanvasCell | null>(null);
   const [code, setCode] = useState("");
   const [qasm, setQasm] = useState("");
+  const [qasm3, setQasm3] = useState("");
   const [result, setResult] = useState<ResultView | null>(null);
   const [analysis, setAnalysis] = useState<CircuitAnalysis | null>(null);
   const [busyAction, setBusyAction] = useState<ComposerBusyAction>(null);
@@ -137,6 +140,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
     requestToken.current += 1;
     setCode("");
     setQasm("");
+    setQasm3("");
     setResult(null);
     setAnalysis(null);
     setBusyAction(null);
@@ -153,8 +157,15 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
   }, [circuit]);
 
   function placeOperation(gate: GateName, qubits: number[], moment: number, clbits: number[], theta?: number) {
-    const operation: CircuitOperation = { gate, qubits, clbits, params: theta !== undefined ? { theta } : {}, moment };
-    setCircuit((current) => ({ ...current, operations: [...removeConflicts(current.operations, moment, qubits), operation] }));
+    if (gate === "custom" || gate === "unitary") return false;
+    const params = defaultGateParams(gate);
+    if (theta !== undefined && "theta" in params) params.theta = theta;
+    const operation: CircuitOperation = { gate, qubits, clbits, params, moment };
+    const check = checkPlacement(circuit, operation, { columns });
+    if (!check.ok) { pushToast(check.reason ?? "That placement is not valid.", "error"); return false; }
+    setCircuit((current) => ({ ...current, operations: [...current.operations, operation] }));
+    setSelectedCell({ qubit: qubits[0], moment });
+    return true;
   }
 
   // Custom gates place immediately (no multi-click endpoint picking, even for
@@ -217,6 +228,13 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
       return;
     }
 
+    const selectedDefinition = GATE_DEFINITIONS[selectedGate as BuiltinGateName];
+    if (selectedDefinition.defaultQubits > 2) {
+      const qubits = Array.from({ length: selectedDefinition.defaultQubits }, (_, index) => qubit + index);
+      placeOperation(selectedGate, qubits, moment, [], selectedDefinition.parameters.some((parameter) => parameter.name === "theta") ? Math.PI / 2 : undefined);
+      return;
+    }
+
     if (selectedGate === "measure" && circuit.num_clbits === 0) {
       pushToast("Add at least one classical bit before placing a measurement.", "error");
       return;
@@ -251,6 +269,13 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
       if (partner < 0) { pushToast("Add another qubit to place a two-qubit gate.", "error"); return; }
       placeOperation(gate, [qubit, partner], moment, []);
       pushToast(`${gate.toUpperCase()} connected q${qubit} → q${partner}. Click either endpoint to fine-tune.`);
+      return;
+    }
+    const droppedDefinition = GATE_DEFINITIONS[gate as BuiltinGateName];
+    if (droppedDefinition.defaultQubits > 2) {
+      const anchor = Math.min(qubit, Math.max(0, circuit.num_qubits - droppedDefinition.defaultQubits));
+      const qubits = Array.from({ length: droppedDefinition.defaultQubits }, (_, index) => anchor + index);
+      placeOperation(gate, qubits, moment, [], droppedDefinition.parameters.some((parameter) => parameter.name === "theta") ? Math.PI / 2 : undefined);
       return;
     }
     if (gate === "measure" && circuit.num_clbits === 0) {
@@ -340,12 +365,13 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
   function replaceSelectedGate(gate: GateName) {
     if (!selectedOperation) return;
     const source = selectedOperation;
-    const stillRotation = ROTATION_GATES.includes(gate);
-    const wasRotation = ROTATION_GATES.includes(source.gate);
+    if (gate === "custom" || gate === "unitary") return;
+    const defaults = defaultGateParams(gate);
+    const nextParams = Object.fromEntries(Object.keys(defaults).map((name) => [name, source.params[name] ?? defaults[name]]));
     setCircuit((current) => ({
       ...current,
       operations: current.operations.map((op) => (op === source
-        ? { ...op, gate, params: stillRotation ? { theta: wasRotation ? (op.params.theta ?? Math.PI / 2) : Math.PI / 2 } : {} }
+        ? { ...op, gate, params: nextParams }
         : op)),
     }));
     pushToast(`Replaced with ${gate.toUpperCase()}.`);
@@ -361,11 +387,11 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
     pushToast(`${source.gate.toUpperCase()} control/target swapped.`);
   }
 
-  function updateSelectedTheta(value: number) {
+  function updateSelectedParameter(name: string, value: number) {
     if (!selectedOperation) return;
     setCircuit((current) => ({
       ...current,
-      operations: current.operations.map((op) => (op === selectedOperation ? { ...op, params: { theta: value } } : op)),
+      operations: current.operations.map((op) => (op === selectedOperation ? { ...op, params: { ...op.params, [name]: value } } : op)),
     }));
   }
 
@@ -383,7 +409,17 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
     setCircuit((current) => ({
       ...current,
       num_qubits: value,
-      operations: current.operations.filter((operation) => operation.qubits.every((qubit) => qubit < value)),
+      operations: current.operations.flatMap((operation) => {
+        if (operation.gate === "barrier") {
+          const coveredWholeRegister = operation.qubits.length === current.num_qubits
+            && operation.qubits.every((qubit, index) => qubit === index);
+          const qubits = coveredWholeRegister
+            ? Array.from({ length: value }, (_, index) => index)
+            : operation.qubits.filter((qubit) => qubit < value);
+          return qubits.length ? [{ ...operation, qubits }] : [];
+        }
+        return operation.qubits.every((qubit) => qubit < value) ? [operation] : [];
+      }),
     }));
     setPending(null);
   }
@@ -405,6 +441,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
   function setGuardedExportMessage() {
     setCode(`# Qiskit export is guarded by the V1 request envelope.\n# ${simulationPath.reason}\n# Circuit JSON remains available. Use Simulator Lab for structured-circuit analysis and execution.`);
     setQasm(`// OpenQASM export is guarded by the V1 request envelope.\n// ${simulationPath.reason}`);
+    setQasm3(`// OpenQASM 3 export is guarded by the V1 request envelope.\n// ${simulationPath.reason}`);
   }
 
   async function generate() {
@@ -420,11 +457,12 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
       }
       const validation = await circuitApi.validate(backendCircuit);
       if (requestToken.current !== token) return;
-      const [codeResponse, qasmResponse] = await Promise.allSettled([circuitApi.code(backendCircuit), circuitApi.qasm(backendCircuit)]);
+      const [codeResponse, qasmResponse, qasm3Response] = await Promise.allSettled([circuitApi.code(backendCircuit), circuitApi.qasm(backendCircuit), circuitApi.qasm3(backendCircuit)]);
       if (requestToken.current !== token) return;
       setCode(codeResponse.status === "fulfilled" ? codeResponse.value.code : `# Qiskit export unavailable\n# ${errorMessage(codeResponse.reason, "Unknown error")}`);
       setQasm(qasmResponse.status === "fulfilled" ? qasmResponse.value.qasm : `// OpenQASM export unavailable\n// ${errorMessage(qasmResponse.reason, "Unknown error")}`);
-      const failed = [codeResponse, qasmResponse].filter((response) => response.status === "rejected").length;
+      setQasm3(qasm3Response.status === "fulfilled" ? qasm3Response.value.qasm : `// OpenQASM 3 export unavailable\n// ${errorMessage(qasm3Response.reason, "Unknown error")}`);
+      const failed = [codeResponse, qasmResponse, qasm3Response].filter((response) => response.status === "rejected").length;
       pushToast(
         failed ? `${validation.message} ${failed} source artifact${failed === 1 ? "" : "s"} could not be generated.` : `${validation.message} Qiskit and OpenQASM outputs are ready.`,
         failed ? "error" : "success",
@@ -494,14 +532,16 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
 
       await circuitApi.validate(backendCircuit);
       if (requestToken.current !== token) return;
-      const [codeResponse, qasmResponse, simulationResponse] = await Promise.allSettled([
+      const [codeResponse, qasmResponse, qasm3Response, simulationResponse] = await Promise.allSettled([
         circuitApi.code(backendCircuit),
         circuitApi.qasm(backendCircuit),
+        circuitApi.qasm3(backendCircuit),
         circuitApi.simulate(backendCircuit),
       ]);
       if (requestToken.current !== token) return;
       setCode(codeResponse.status === "fulfilled" ? codeResponse.value.code : `# Qiskit export unavailable\n# ${errorMessage(codeResponse.reason, "Unknown error")}`);
       setQasm(qasmResponse.status === "fulfilled" ? qasmResponse.value.qasm : `// OpenQASM export unavailable\n// ${errorMessage(qasmResponse.reason, "Unknown error")}`);
+      setQasm3(qasm3Response.status === "fulfilled" ? qasm3Response.value.qasm : `// OpenQASM 3 export unavailable\n// ${errorMessage(qasm3Response.reason, "Unknown error")}`);
       if (simulationResponse.status === "rejected") throw simulationResponse.reason;
       const simulation = simulationResponse.value;
       setResult({ counts: simulation.counts, depth: simulation.depth, gate_counts: simulation.gate_counts, diagram: simulation.diagram, circuit_diagram: simulation.circuit_diagram, warnings: simulation.warnings });
@@ -639,7 +679,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
       onClbitsChange={changeClbits}
       onColumnsChange={changeColumns}
       onShotsChange={(shots) => setCircuit((current) => ({ ...current, shots }))}
-      onThetaChange={updateSelectedTheta}
+      onParameterChange={updateSelectedParameter}
       onDeleteSelected={deleteSelected}
       onDuplicateSelected={duplicateSelected}
       onMoveSelected={moveSelected}
@@ -713,7 +753,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
         </div>
       </div>
 
-      <OutputDock circuit={sortedCircuit} code={code} qasm={qasm} result={result} running={running} autoExpandKey={runCounter} />
+      <OutputDock circuit={sortedCircuit} code={code} qasm={qasm} qasm3={qasm3} result={result} running={running} autoExpandKey={runCounter} />
 
       <AnimatePresence>
         {mobilePanel === "gates" && <MobileSheet key="gates" onClose={() => setMobilePanel("none")} title="Gate library">{gateDock}</MobileSheet>}

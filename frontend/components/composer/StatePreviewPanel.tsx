@@ -74,7 +74,11 @@ export function StatePreviewPanel({ circuit, customLibrary }: { circuit: Circuit
   const resolved = useMemo(() => resolveCustomOperations(circuit, customLibrary ?? new Map()), [circuit, customLibrary]);
   const preview = useMemo(() => (resolved.ok && resolved.circuit ? computeStatePreview(resolved.circuit) : null), [resolved]);
   const entanglement = useMemo(() => (preview ? concurrence(preview) : null), [preview]);
-  const blockedReason = !resolved.ok ? resolved.reason : null;
+  const blockedReason = !resolved.ok
+    ? resolved.reason
+    : resolved.circuit?.operations.some((operation) => operation.gate === "reset")
+      ? "Reset is non-unitary and can produce a mixed state, so the pure-state browser preview stops here. Run Simulator Lab with density-matrix state analysis for the post-reset state."
+      : null;
 
   const [comparison, setComparison] = useState<ComparisonState>({ kind: "idle" });
   // A stale comparison for a circuit the user has since edited would be

@@ -29,12 +29,11 @@ import { localCustomGateRepository } from "@/lib/customGateRepository";
 import { CUSTOM_GATE_TEMPLATES, type DefinitionTemplate } from "@/lib/customGateTemplates";
 import { stepOperandArity, validateDefinition } from "@/lib/customGateValidation";
 import type { CircuitData, CircuitOperation } from "@/lib/types";
+import { BUILTIN_GATE_NAMES, BUILTIN_GATE_SET, GATE_DEFINITIONS, defaultGateParams, type BuiltinGateName } from "@/lib/gateRegistry";
 import { ModalPortal, useModalLifecycle } from "@/components/workspace/Modal";
 import { CustomGateGlyph } from "./CustomGateGlyph";
 
 type Kind = "matrix" | "decomposition" | "composite";
-
-const BUILTIN_STEP_GATES = ["x", "y", "z", "h", "s", "t", "rx", "ry", "rz", "cx", "cz", "swap", "measure", "barrier"] as const;
 
 function real(rows: number[][]): ComplexPair[][] {
   return rows.map((row) => row.map((value) => [value, 0] as ComplexPair));
@@ -272,12 +271,13 @@ export function CustomGateWizard({
 
   function changeStepGate(index: number, gate: string) {
     const arity = stepOperandArity(gate, libraryMap) ?? { qubits: 1, clbits: 0 };
-    const qubitCount = arity.qubits === -1 ? Math.max(1, decompQubits) : arity.qubits;
+    const builtin = BUILTIN_GATE_SET.has(gate) ? gate as BuiltinGateName : null;
+    const qubitCount = arity.qubits === -1 ? (builtin ? GATE_DEFINITIONS[builtin].defaultQubits : Math.max(1, decompQubits)) : arity.qubits;
     updateStep(index, {
       gate,
       qubits: Array.from({ length: qubitCount }, (_, i) => Math.min(i, Math.max(0, decompQubits - 1))),
       clbits: Array.from({ length: arity.clbits }, () => 0),
-      params: gate === "rx" || gate === "ry" || gate === "rz" ? { theta: Math.PI / 2 } : {},
+      params: builtin ? defaultGateParams(builtin) : {},
     });
   }
 
@@ -289,7 +289,7 @@ export function CustomGateWizard({
     onClose();
   }
 
-  const stepGateOptions = [...BUILTIN_STEP_GATES.map((g) => ({ value: g, label: g.toUpperCase() })), ...[...libraryMap.values()].map((d) => ({ value: customGateRef(d.id), label: `${d.label} (${d.name})` }))];
+  const stepGateOptions = [...BUILTIN_GATE_NAMES.map((gate) => ({ value: gate, label: GATE_DEFINITIONS[gate].label })), ...[...libraryMap.values()].map((d) => ({ value: customGateRef(d.id), label: `${d.label} (${d.name})` }))];
 
   return (
     <ModalPortal>
@@ -441,7 +441,7 @@ export function CustomGateWizard({
                   <div className="space-y-2">
                     {steps.map((step, index) => {
                       const arity = stepOperandArity(step.gate, libraryMap);
-                      const isRotation = step.gate === "rx" || step.gate === "ry" || step.gate === "rz";
+                      const parameterSpecs = BUILTIN_GATE_SET.has(step.gate) ? GATE_DEFINITIONS[step.gate as BuiltinGateName].parameters : [];
                       return (
                         <div key={index} className="rounded-lg border border-line-hairline p-2">
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -460,17 +460,15 @@ export function CustomGateWizard({
                             {step.gate === "measure" && (
                               <input aria-label={`Step ${index + 1} classical bit`} type="number" min={0} max={Math.max(0, decompClbits - 1)} value={step.clbits[0] ?? 0} onChange={(e) => updateStep(index, { clbits: [Number(e.target.value)] })} className="w-12 rounded-md border border-line-hairline bg-warn-bg px-1.5 py-1 text-center font-mono text-xs" title="Classical bit" />
                             )}
-                            {isRotation && (
-                              parameters.length > 0 ? (
-                                <select aria-label={`Step ${index + 1} angle source`} className={`${inputClassName} min-h-8 w-auto py-1 text-xs`} value={typeof step.params.theta === "string" ? step.params.theta : "literal"} onChange={(e) => updateStep(index, { params: { theta: e.target.value === "literal" ? Math.PI / 2 : (e.target.value as `param:${string}`) } })}>
-                                  <option value="literal">literal angle</option>
-                                  {parameters.map((p) => <option key={p.name} value={`param:${p.name}`}>param: {p.name}</option>)}
-                                </select>
-                              ) : null
-                            )}
-                            {isRotation && typeof step.params.theta !== "string" && (
-                              <input aria-label={`Step ${index + 1} angle (radians)`} type="number" step="0.01" value={typeof step.params.theta === "number" ? step.params.theta : 0} onChange={(e) => updateStep(index, { params: { theta: Number(e.target.value) } })} className="w-20 rounded-md border border-line-hairline bg-surface-sunken px-1.5 py-1 text-center font-mono text-xs" />
-                            )}
+                            {parameterSpecs.map((spec) => (
+                              <span key={spec.name} className="flex items-center gap-1">
+                                {parameters.length > 0 && <select aria-label={`Step ${index + 1} ${spec.name} source`} className={`${inputClassName} min-h-8 w-auto py-1 text-xs`} value={typeof step.params[spec.name] === "string" ? step.params[spec.name] as string : "literal"} onChange={(e) => updateStep(index, { params: { ...step.params, [spec.name]: e.target.value === "literal" ? spec.default : (e.target.value as `param:${string}`) } })}>
+                                  <option value="literal">{spec.name}: literal</option>
+                                  {parameters.map((p) => <option key={p.name} value={`param:${p.name}`}>{spec.name}: {p.name}</option>)}
+                                </select>}
+                                {typeof step.params[spec.name] !== "string" && <input aria-label={`Step ${index + 1} ${spec.name} (radians)`} type="number" step="0.01" value={typeof step.params[spec.name] === "number" ? step.params[spec.name] as number : spec.default} onChange={(e) => updateStep(index, { params: { ...step.params, [spec.name]: Number(e.target.value) } })} className="w-20 rounded-md border border-line-hairline bg-surface-sunken px-1.5 py-1 text-center font-mono text-xs" />}
+                              </span>
+                            ))}
                             <Button variant="quiet" size="sm" className="ml-auto !text-red-500" aria-label={`Remove step ${index + 1}`} onClick={() => setSteps((s) => s.filter((_, i) => i !== index))}><X className="h-3.5 w-3.5" /></Button>
                           </div>
                         </div>

@@ -42,6 +42,7 @@ import {
 import { isMatrixDefinition, type CustomDefinition } from "@/lib/customGates";
 import { checkPlacement, shiftQubits } from "@/lib/placement";
 import type { CircuitOperation, GateName } from "@/lib/types";
+import { BUILTIN_GATE_SET, GATE_DEFINITIONS, gateControlCount, type BuiltinGateName } from "@/lib/gateRegistry";
 import { CanvasMinimap } from "./CanvasMinimap";
 import { CustomGateIconShape } from "./CustomGateGlyph";
 
@@ -51,7 +52,7 @@ export interface CanvasCell {
 }
 
 const cellKey = (qubit: number, moment: number) => `${qubit}:${moment}`;
-const TWO_QUBIT_GATES: GateName[] = ["cx", "cz", "swap"];
+const isBuiltinMulti = (operation: CircuitOperation) => BUILTIN_GATE_SET.has(operation.gate) && operation.qubits.length >= 2;
 const MOVE_THRESHOLD_PX = 3;
 const EDGE_SCROLL_MARGIN = 36;
 const EDGE_SCROLL_SPEED = 14;
@@ -573,7 +574,8 @@ export function CircuitCanvas({
   // a multi-qubit custom gate places immediately, anchored at the clicked cell,
   // so it is treated the same way here rather than trying to preview its full span).
   const selectedCustomDefinition = selectedGate === "custom" && selectedCustomId ? customLibrary?.get(selectedCustomId) : undefined;
-  const isMultiEndpointGate = TWO_QUBIT_GATES.includes(selectedGate) || (selectedGate === "custom" && (selectedCustomDefinition?.numQubits ?? 1) > 1);
+  const selectedBuiltin = BUILTIN_GATE_SET.has(selectedGate) ? GATE_DEFINITIONS[selectedGate as BuiltinGateName] : null;
+  const isMultiEndpointGate = (selectedBuiltin?.defaultQubits ?? 1) > 1 || (selectedGate === "custom" && (selectedCustomDefinition?.numQubits ?? 1) > 1);
   const ghostLabel = selectedGate === "custom" ? (selectedCustomDefinition?.label ?? "?") : selectedGate === "measure" ? "M" : selectedGate === "barrier" ? "‖" : selectedGate.toUpperCase();
 
   return (
@@ -694,8 +696,8 @@ export function CircuitCanvas({
               </g>
             )}
 
-            {/* Two-qubit connectors */}
-            {visibleOperations.filter((op) => op.qubits.length === 2 && TWO_QUBIT_GATES.includes(op.gate)).map((op, index) => {
+            {/* Built-in multi-qubit connectors */}
+            {visibleOperations.filter(isBuiltinMulti).map((op, index) => {
               const low = Math.min(...op.qubits);
               const high = Math.max(...op.qubits);
               const isMoving = activeMove?.hasMoved && op === activeMove.operation;
@@ -764,7 +766,7 @@ export function CircuitCanvas({
 
                 if (operation.gate === "barrier") {
                   return (
-                    <g key={key} onClick={(event) => handleGateClick(event, qubit, moment)} className="cursor-pointer">
+                    <g key={key} onClick={(event) => handleGateClick(event, qubit, moment)} onPointerDown={(event) => handleGatePointerDown(event, operation)} className="cursor-grab active:cursor-grabbing">
                       <rect x={cx - CELL.width / 2} y={cy - CELL.height / 2} width={CELL.width} height={CELL.height} fill="transparent" />
                       <line x1={cx} y1={cy - 22} x2={cx} y2={cy + 22} stroke="#a1a1aa" strokeWidth={2} strokeDasharray="4 3" />
                       {isCursor && <rect x={cx - 17} y={cy - 17} width={34} height={34} rx={8} fill="none" stroke="#a5a6f6" strokeWidth={1.5} strokeDasharray="3 2" />}
@@ -772,9 +774,14 @@ export function CircuitCanvas({
                   );
                 }
 
-                if (TWO_QUBIT_GATES.includes(operation.gate)) {
-                  const isControl = operation.gate !== "swap" && operation.qubits[0] === qubit;
-                  const isSwapNode = operation.gate === "swap";
+                if (isBuiltinMulti(operation)) {
+                  const builtin = operation.gate as BuiltinGateName;
+                  const definition = GATE_DEFINITIONS[builtin];
+                  const operandIndex = operation.qubits.indexOf(qubit);
+                  const controls = gateControlCount(builtin, operation.qubits.length);
+                  const isControl = operandIndex >= 0 && operandIndex < controls;
+                  const isSwapNode = definition.visual === "swap" || (builtin === "cswap" && !isControl);
+                  const isXTarget = builtin === "cx" || builtin === "ccx" || builtin === "mcx";
                   return (
                     <g
                       key={key}
@@ -792,7 +799,7 @@ export function CircuitCanvas({
                         </g>
                       ) : isControl ? (
                         <circle cx={cx} cy={cy} r={6} fill="#4338ca" />
-                      ) : operation.gate === "cx" ? (
+                      ) : isXTarget ? (
                         <g>
                           <circle cx={cx} cy={cy} r={11} fill="#ffffff" stroke="#4338ca" strokeWidth={2} />
                           <line x1={cx - 7} y1={cy} x2={cx + 7} y2={cy} stroke="#4338ca" strokeWidth={2} />
@@ -801,7 +808,7 @@ export function CircuitCanvas({
                       ) : (
                         <g>
                           <rect x={cx - 12} y={cy - 12} width={24} height={24} rx={5} fill="#ffffff" stroke="#4338ca" strokeWidth={2} />
-                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontFamily="var(--font-mono)" fontSize={11} fontWeight={700} fill="#4338ca">Z</text>
+                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontFamily="var(--font-mono)" fontSize={Math.min(11, 32 / definition.label.length)} fontWeight={700} fill="#4338ca">{definition.label.replace(/^C/, "")}</text>
                         </g>
                       )}
                       {isCursor && <rect x={cx - 17} y={cy - 17} width={34} height={34} rx={8} fill="none" stroke="#6366f1" strokeWidth={2} />}

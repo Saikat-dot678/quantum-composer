@@ -22,7 +22,7 @@ import {
   type CustomParameterSpec,
   type DecompositionStep,
 } from "./customGates";
-import { ROTATION_GATES, TWO_QUBIT_GATES, type GateName } from "./types";
+import { BUILTIN_GATE_SET, GATE_DEFINITIONS, type BuiltinGateName } from "./gateRegistry";
 
 export interface ValidationResult {
   ok: boolean;
@@ -66,8 +66,7 @@ export function normalizeCustomDefinition(value: unknown): CustomDefinition | nu
   return value as unknown as CustomDefinition;
 }
 
-const BUILTIN_GATES = new Set<GateName>(["x", "y", "z", "h", "s", "t", "rx", "ry", "rz", "cx", "cz", "swap", "measure", "barrier"]);
-const SINGLE_QUBIT_GATES = new Set<GateName>(["x", "y", "z", "h", "s", "t"]);
+const BUILTIN_GATES = BUILTIN_GATE_SET;
 
 export function validateName(name: string): ValidationResult {
   const trimmed = name.trim();
@@ -158,12 +157,9 @@ export function validateMatrix(matrix: unknown, numQubits: number, tolerance = D
 // Decomposition / composite steps
 // ---------------------------------------------------------------------------
 
-function expectedOperandCounts(gate: GateName): { qubits: number; clbits: number } | null {
-  if (SINGLE_QUBIT_GATES.has(gate) || ROTATION_GATES.includes(gate)) return { qubits: 1, clbits: 0 };
-  if (TWO_QUBIT_GATES.includes(gate)) return { qubits: 2, clbits: 0 };
-  if (gate === "measure") return { qubits: 1, clbits: 1 };
-  if (gate === "barrier") return { qubits: -1, clbits: 0 }; // barrier accepts any qubit count >= 1
-  return null;
+function expectedOperandCounts(gate: BuiltinGateName): { qubits: number; clbits: number } | null {
+  const definition = GATE_DEFINITIONS[gate];
+  return { qubits: definition.maxQubits === definition.minQubits ? definition.minQubits : -1, clbits: definition.clbits };
 }
 
 /** Like expectedOperandCounts, but also resolves `custom:<id>` step references against a library — used by the step editor UI to size its qubit/clbit inputs regardless of whether a step targets a built-in or another custom definition. */
@@ -173,7 +169,7 @@ export function stepOperandArity(gate: string, library: ReadonlyMap<string, Cust
     const referenced = library.get(customId);
     return referenced ? { qubits: definitionNumQubits(referenced), clbits: definitionNumClbits(referenced) } : null;
   }
-  return expectedOperandCounts(gate as GateName);
+  return BUILTIN_GATES.has(gate) ? expectedOperandCounts(gate as BuiltinGateName) : null;
 }
 
 export interface StepsValidation extends ValidationResult {
@@ -236,15 +232,23 @@ export function validateSteps(
       if (!nested.ok) return { ok: false, reason: `Step ${index + 1}: ${nested.reason}` };
       expandedCount += nested.expandedCount ?? 1;
     } else {
-      if (!BUILTIN_GATES.has(step.gate as GateName)) {
+      if (!BUILTIN_GATES.has(step.gate)) {
         return { ok: false, reason: `Step ${index + 1}: "${step.gate}" is not a recognized built-in gate or custom:<id> reference.` };
       }
-      const shape = expectedOperandCounts(step.gate as GateName);
+      const builtin = step.gate as BuiltinGateName;
+      const shape = expectedOperandCounts(builtin);
       if (shape && shape.qubits !== -1 && step.qubits.length !== shape.qubits) {
         return { ok: false, reason: `Step ${index + 1}: ${step.gate} needs exactly ${shape.qubits} qubit(s), got ${step.qubits.length}.` };
       }
+      if (shape?.qubits === -1 && step.qubits.length < GATE_DEFINITIONS[builtin].minQubits) {
+        return { ok: false, reason: `Step ${index + 1}: ${step.gate} needs at least ${GATE_DEFINITIONS[builtin].minQubits} qubit(s).` };
+      }
       if (shape && step.clbits.length !== shape.clbits) {
         return { ok: false, reason: `Step ${index + 1}: ${step.gate} needs exactly ${shape.clbits} classical bit(s), got ${step.clbits.length}.` };
+      }
+      const expectedParams = GATE_DEFINITIONS[builtin].parameters.map((parameter) => parameter.name);
+      if (Object.keys(step.params).length !== expectedParams.length || expectedParams.some((name) => !(name in step.params))) {
+        return { ok: false, reason: `Step ${index + 1}: ${step.gate} requires exactly ${expectedParams.length ? expectedParams.join(", ") : "no"} parameter(s).` };
       }
       expandedCount += 1;
     }

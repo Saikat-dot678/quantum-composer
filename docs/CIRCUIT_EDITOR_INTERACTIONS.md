@@ -213,10 +213,13 @@ layout zoom, document width, and wizard bounds.
 
 ## Known limitations
 
-- Built-in gate click-placement/drag-from-dock still uses its pre-existing
-  "replace the conflicting cell" behavior rather than `checkPlacement`'s
-  reject-on-conflict behavior (see "One placement system" above) — a
-  disclosed, deliberate scope boundary, not an oversight.
+- Built-in, custom, drag, and keyboard placement now share `checkPlacement`
+  and reject conflicts without deleting the existing operation. Variadic
+  MCX/MCP placement starts with the registry's three-qubit default; operand
+  order remains control(s)-then-target and can be repositioned atomically.
+- A full-register barrier tracks register resizing; a scoped barrier is clipped
+  to surviving qubits. Barrier nodes participate in the same pointer/keyboard
+  move workflow as gates.
 - No systematic large-circuit (hundreds of visible operations, sustained
   drag) performance profiling was performed in this pass; virtualization and
   memoization changes were verified functionally correct and reasonable by
