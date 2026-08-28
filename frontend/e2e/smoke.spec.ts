@@ -206,20 +206,20 @@ test("barrier renders as a full synchronization boundary and moves as one operat
   await clickCircuitCell(page, 0, 7);
   await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
   await expect(page.getByRole("heading", { name: "Barrier" })).toBeVisible();
-  await expect(page.locator('[data-circuit-barrier="true"][data-moment="7"][data-qubits="0,1"]')).toBeVisible();
+  await expect(page.locator('[data-circuit-barrier="true"][data-moment="7"][data-qubits="0,1"]').locator("line")).toBeVisible();
 
   const canvas = page.getByRole("application");
   await canvas.focus();
   await page.keyboard.press("m");
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("Enter");
-  await expect(page.locator('[data-circuit-barrier="true"][data-moment="6"][data-qubits="0,1"]')).toBeVisible();
+  await expect(page.locator('[data-circuit-barrier="true"][data-moment="6"][data-qubits="0,1"]').locator("line")).toBeVisible();
   await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
 
   await page.keyboard.press("Control+z");
-  await expect(page.locator('[data-circuit-barrier="true"][data-moment="7"][data-qubits="0,1"]')).toBeVisible();
+  await expect(page.locator('[data-circuit-barrier="true"][data-moment="7"][data-qubits="0,1"]').locator("line")).toBeVisible();
   await page.keyboard.press("Control+y");
-  await expect(page.locator('[data-circuit-barrier="true"][data-moment="6"][data-qubits="0,1"]')).toBeVisible();
+  await expect(page.locator('[data-circuit-barrier="true"][data-moment="6"][data-qubits="0,1"]').locator("line")).toBeVisible();
 
   await clickCircuitCell(page, 0, 6);
   await page.keyboard.press("Delete");
