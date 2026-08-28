@@ -22,6 +22,29 @@ const SHARED_CIRCUIT = {
   operations: [{ gate: "h", qubits: [0], clbits: [], params: {}, moment: 0 }],
 };
 
+async function expectBarrierBoundary(page: import("@playwright/test").Page, moment: number) {
+  const barrier = page.locator(`[data-circuit-barrier="true"][data-moment="${moment}"][data-qubits="0,1"]`);
+  await expect(barrier).toHaveCount(1);
+  const rendered = await barrier.locator("line").evaluate((node) => {
+    const line = node as SVGLineElement;
+    const style = window.getComputedStyle(line);
+    return {
+      length: line.getTotalLength(),
+      strokeWidth: Number.parseFloat(style.strokeWidth),
+      stroke: style.stroke,
+      display: style.display,
+      visibility: style.visibility,
+      opacity: Number.parseFloat(style.opacity || "1"),
+    };
+  });
+  expect(rendered.length).toBeGreaterThan(0);
+  expect(rendered.strokeWidth).toBeGreaterThan(0);
+  expect(rendered.stroke).not.toBe("none");
+  expect(rendered.display).not.toBe("none");
+  expect(rendered.visibility).not.toBe("hidden");
+  expect(rendered.opacity).toBeGreaterThan(0);
+}
+
 test("root redirects to the composer with the workspace status visible", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/composer$/);
@@ -206,20 +229,20 @@ test("barrier renders as a full synchronization boundary and moves as one operat
   await clickCircuitCell(page, 0, 7);
   await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
   await expect(page.getByRole("heading", { name: "Barrier" })).toBeVisible();
-  await expect(page.locator('[data-circuit-barrier="true"][data-moment="7"][data-qubits="0,1"]').locator("line")).toBeVisible();
+  await expectBarrierBoundary(page, 7);
 
   const canvas = page.getByRole("application");
   await canvas.focus();
   await page.keyboard.press("m");
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("Enter");
-  await expect(page.locator('[data-circuit-barrier="true"][data-moment="6"][data-qubits="0,1"]').locator("line")).toBeVisible();
+  await expectBarrierBoundary(page, 6);
   await expect(workspaceStatus(page)).toContainText("2q · 5 ops");
 
   await page.keyboard.press("Control+z");
-  await expect(page.locator('[data-circuit-barrier="true"][data-moment="7"][data-qubits="0,1"]').locator("line")).toBeVisible();
+  await expectBarrierBoundary(page, 7);
   await page.keyboard.press("Control+y");
-  await expect(page.locator('[data-circuit-barrier="true"][data-moment="6"][data-qubits="0,1"]').locator("line")).toBeVisible();
+  await expectBarrierBoundary(page, 6);
 
   await clickCircuitCell(page, 0, 6);
   await page.keyboard.press("Delete");
