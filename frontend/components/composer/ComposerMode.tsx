@@ -134,6 +134,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
   // since a handful of composite instances can expand into far more built-in
   // operations than the V1 envelope's raw top-level operation count implies.
   const resolved = useMemo(() => resolveCustomOperations(sortedCircuit, customLibraryMap), [sortedCircuit, customLibraryMap]);
+  const resolvedFingerprint = JSON.stringify(resolved);
   const routableCircuit = resolved.ok && resolved.circuit ? resolved.circuit : sortedCircuit;
   const simulationPath = useMemo(() => getSimulationPath(routableCircuit), [routableCircuit]);
   const selectedOperation = useMemo(() => {
@@ -154,7 +155,7 @@ export function ComposerMode({ circuit, setCircuit, onOpenSimulatorLab, onOpenHa
     setBusyAction(null);
     setRunning(false);
     setPending(null);
-  }, [circuit]);
+  }, [circuit, resolvedFingerprint]);
 
   // A selected operation should survive edits to that operation (parameter
   // changes, endpoint swaps, replacements, moves). Only clear the inspector

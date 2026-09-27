@@ -5,7 +5,7 @@
 // `CustomGateRepository` interface without touching call sites. Stores only
 // declarative JSON — never a function body, never anything eval'd.
 import { normalizeCustomDefinition, validateDefinition } from "./customGateValidation";
-import { MAX_CUSTOM_DEFINITIONS, type CustomDefinition } from "./customGates";
+import { MAX_CUSTOM_DEFINITIONS, customGateRef, parseCustomGateRef, type CustomDefinition } from "./customGates";
 
 const STORE_KEY = "quantum-composer.custom-gates.v1";
 const RECOVERY_NOTICE_KEY = "quantum-composer.custom-gates.recovery-notice.v1";
@@ -57,7 +57,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function recoverCorruptStore(raw: string, detail: string): void {
   try {
     const recoveryKey = `${RECOVERY_PREFIX}${Date.now()}`;
-    window.localStorage.setItem(recoveryKey, raw.slice(0, 1_000_000));
+    window.localStorage.setItem(recoveryKey, raw);
     window.sessionStorage.setItem(
       RECOVERY_NOTICE_KEY,
       `Saved custom gates could not be read (${detail}). A recovery copy was kept as ${recoveryKey}; the library was reset safely.`,
@@ -97,6 +97,8 @@ function readStore(): CustomDefinition[] {
 
 function writeStore(definitions: CustomDefinition[]): DefinitionMutation<true> {
   try {
+    const previous = window.localStorage.getItem(STORE_KEY);
+    if (previous && !parseStore(previous)) return { ok: false, reason: "The damaged library could not be backed up. Export its complete data before replacing it." };
     const envelope: DefinitionEnvelope = { version: 1, definitions };
     window.localStorage.setItem(STORE_KEY, JSON.stringify(envelope));
     return { ok: true, value: true };
@@ -190,6 +192,9 @@ export const localCustomGateRepository: CustomGateRepository = {
   remove: (id) => {
     const definitions = readStore();
     if (findIndex(definitions, id) < 0) return { ok: false, reason: "That custom gate no longer exists." };
+    if (definitions.some(def => def.kind !== "matrix" && def.steps.some(step => parseCustomGateRef(step.gate) === id))) {
+      return { ok: false, reason: "Another custom definition depends on this gate. Remove or update that dependency first." };
+    }
     const written = writeStore(definitions.filter((def) => def.id !== id));
     if (written.ok) {
       writeRecent(readRecent().filter((recentId) => recentId !== id));
@@ -231,51 +236,72 @@ export const localCustomGateRepository: CustomGateRepository = {
     } catch {
       return { ok: false, reason: "That file is not valid JSON." };
     }
-    const incoming = isPlainObject(parsed) && Array.isArray(parsed.definitions)
+    const incoming = isPlainObject(parsed) && parsed.version === 1 && Array.isArray(parsed.definitions) && parsed.definitions.length <= MAX_CUSTOM_DEFINITIONS
       ? parsed.definitions.map(normalizeCustomDefinition)
       : null;
     if (!incoming || incoming.some((def) => def === null)) {
       return { ok: false, reason: "That file is not a recognized custom-gate library export." };
     }
     const existing = readStore();
-    const existingIds = new Set(existing.map((def) => def.id));
-    const existingNames = new Set(existing.map((def) => def.name.toLowerCase()));
-    const merged = [...existing];
-    const renamed: string[] = [];
+    const definitions = incoming as CustomDefinition[];
+    if (new Set(definitions.map(def => def.id)).size !== definitions.length) {
+      return { ok: false, reason: "The imported library contains duplicate definition IDs." };
+    }
+    const existingMap = libraryMap(existing);
+    const incomingIds = new Set(definitions.map(def => def.id));
+    for (const def of definitions) {
+      if (def.kind !== "matrix" && def.steps.some(step => {
+        const child = parseCustomGateRef(step.gate);
+        return child !== null && !incomingIds.has(child);
+      })) return { ok: false, reason: `Imported definition "${def.name}" is missing a bundled dependency.` };
+    }
     const idMap: Record<string, string> = {};
-    let imported = 0;
-    let skipped = 0;
-    const mergedMap = libraryMap(merged);
-
-    for (const def of incoming as CustomDefinition[]) {
-      const originalId = def.id;
-      // Same id AND same content (e.g. reopening the same share link twice):
-      // treat as already-present rather than piling up an identical duplicate.
-      const existingDef = mergedMap.get(originalId);
-      if (existingDef && definitionsEquivalent(existingDef, def)) {
-        idMap[originalId] = originalId;
-        imported += 1;
-        continue;
+    for (const def of definitions) {
+      const previous = existingMap.get(def.id);
+      idMap[def.id] = previous && !definitionsEquivalent(previous, def) ? makeId() : def.id;
+    }
+    // A parent identical in isolation is different when one of its children
+    // was remapped. Propagate that change through the entire dependency graph.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const def of definitions) {
+        if (def.kind === "matrix" || idMap[def.id] !== def.id || !existingMap.has(def.id)) continue;
+        if (def.steps.some(step => {
+          const child = parseCustomGateRef(step.gate);
+          return child !== null && child in idMap && idMap[child] !== child;
+        })) { idMap[def.id] = makeId(); changed = true; }
       }
-      if (merged.length >= MAX_CUSTOM_DEFINITIONS) { skipped += 1; continue; }
-      let candidate = def;
-      // Id collision with genuinely different content: reassign a fresh id
-      // rather than silently overwrite something the user already has.
-      if (existingIds.has(candidate.id)) candidate = { ...candidate, id: makeId() };
-      // Name collision: keep both, distinguish the imported copy.
-      if (existingNames.has(candidate.name.toLowerCase())) {
-        candidate = { ...candidate, name: `${candidate.name} (imported)` };
+    }
+    const renamed: string[] = [];
+    const names = new Set(existing.map(def => def.name.toLowerCase()));
+    const merged = [...existing];
+    for (const def of definitions) {
+      if (idMap[def.id] === def.id && existingMap.has(def.id)) continue;
+      let candidate = { ...def, id: idMap[def.id] };
+      if (candidate.kind !== "matrix") {
+        candidate = { ...candidate, steps: candidate.steps.map(step => {
+          const child = parseCustomGateRef(step.gate);
+          return child === null ? step : { ...step, gate: customGateRef(idMap[child]) };
+        }) };
+      }
+      if (names.has(candidate.name.toLowerCase())) {
+        candidate = { ...candidate, name: `${candidate.name.slice(0, 45)} (imported)` };
         renamed.push(candidate.name);
       }
-      const check = validateDefinition(candidate, mergedMap);
-      if (!check.ok) { skipped += 1; continue; }
+      names.add(candidate.name.toLowerCase());
       merged.push(candidate);
-      mergedMap.set(candidate.id, candidate);
-      existingIds.add(candidate.id);
-      existingNames.add(candidate.name.toLowerCase());
-      idMap[originalId] = candidate.id;
-      imported += 1;
     }
+    if (merged.length > MAX_CUSTOM_DEFINITIONS) {
+      return { ok: false, reason: `Import would exceed the ${MAX_CUSTOM_DEFINITIONS}-gate limit. No definitions were imported.` };
+    }
+    const mergedMap = libraryMap(merged);
+    for (const def of merged) {
+      const check = validateDefinition(def, mergedMap);
+      if (!check.ok) return { ok: false, reason: check.reason };
+    }
+    const imported = definitions.length;
+    const skipped = 0;
 
     const written = writeStore(merged);
     if (!written.ok) return { ok: false, reason: written.reason };

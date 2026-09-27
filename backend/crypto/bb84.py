@@ -89,7 +89,21 @@ def simulate_bb84(
     qber = (errors / sifted_len) if sifted_len else 0.0
     eve_detected = qber > QBER_SECURITY_THRESHOLD
 
-    amplified = privacy_amplify(sifted_alice, qber, seed=seed)
+    # Disclosed test bits must never be hashed into even the illustrative output.
+    sample_positions = sorted(rng.sample(range(sifted_len), min(64, sifted_len // 4)))
+    disclosed = set(sample_positions)
+    sample_errors = sum(sifted_alice[i] != sifted_bob[i] for i in sample_positions)
+    sample_qber = sample_errors / len(sample_positions) if sample_positions else None
+    undisclosed = [bit for i, bit in enumerate(sifted_alice) if i not in disclosed]
+    status = ("insufficient_data" if len(sample_positions) < 8 else
+              "aborted" if qber > QBER_SECURITY_THRESHOLD or (sample_qber or 0) > QBER_SECURITY_THRESHOLD else
+              "illustration_only")
+    hash_seed = rng.getrandbits(32)
+    amplified = privacy_amplify(undisclosed if status == "illustration_only" else [],
+                               max(qber, sample_qber or 0), seed=hash_seed)
+    amplified["public_hash_seed"] = hash_seed
+    amplified["protocol_status"] = status
+
 
     explanation = (
         "Alice and Bob keep only the bits where their random bases matched "
@@ -141,7 +155,14 @@ def simulate_bb84(
         "sifted_key_length": sifted_len,
         "sift_positions": sift_positions[:512],
         "qber": qber,
-        "eve_detected": eve_detected,
+        "eve_detected": eve_detected,  # compatibility alias, not attribution of an attack
+        "disturbance_alert": eve_detected,
+        "protocol_status": status,
+        "qber_available": sifted_len > 0,
+        "parameter_estimation": {"sample_positions": sample_positions, "sample_size": len(sample_positions),
+                                 "sample_errors": sample_errors, "qber": sample_qber,
+                                 "remaining_length": len(undisclosed),
+                                 "note": "Disclosed positions are removed. No finite-key security claim or reconciliation is implemented."},
         "final_key_length": amplified["output_length"],
         "privacy_amplification": amplified,
         "explanation": explanation,

@@ -12,6 +12,9 @@ from __future__ import annotations
 import os
 import queue
 import threading
+import time
+from dataclasses import dataclass
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, Callable, TypeVar
 
@@ -29,10 +32,40 @@ class IBMConnectionError(RuntimeError):
 
 
 _lock = threading.RLock()
-_service: Any | None = None
-_connection_mode: str = "none"
-_instance_hint: str | None = None
-_account_error: str | None = None
+@dataclass
+class AccountState:
+    service: Any | None = None
+    connection_mode: str = "none"
+    instance_hint: str | None = None
+    account_error: str | None = None
+    touched: float = 0.0
+
+
+account_context: ContextVar[AccountState | None] = ContextVar("quantum_account", default=None)
+_sessions: dict[str, AccountState] = {}
+_provider_slots = threading.BoundedSemaphore(4)
+
+
+def session_state(key: str | None) -> AccountState:
+    if not key:
+        return AccountState()
+    now = time.monotonic()
+    with _lock:
+        expired = [k for k, state in _sessions.items() if now - state.touched > 1800]
+        for k in expired:
+            del _sessions[k]
+        if key not in _sessions and len(_sessions) >= 100:
+            raise IBMConnectionError("Too many active account sessions. Retry after a session expires.")
+        state = _sessions.setdefault(key, AccountState())
+        state.touched = now
+        return state
+
+
+def _state() -> AccountState:
+    state = account_context.get()
+    if state is None:
+        raise IBMConnectionError("An account session is required for IBM discovery.")
+    return state
 
 
 def _call_with_timeout(function: Callable[[], _T], timeout: float = IBM_TIMEOUT_SECONDS) -> _T:
@@ -45,6 +78,8 @@ def _call_with_timeout(function: Callable[[], _T], timeout: float = IBM_TIMEOUT_
     without bound by one browser.
     """
 
+    if not _provider_slots.acquire(blocking=False):
+        raise IBMConnectionError("IBM provider calls are busy. Retry after an existing call completes.")
     output: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
 
     def run() -> None:
@@ -52,6 +87,8 @@ def _call_with_timeout(function: Callable[[], _T], timeout: float = IBM_TIMEOUT_
             output.put((True, function()))
         except BaseException as error:  # carried to the request thread; never logged here
             output.put((False, error))
+        finally:
+            _provider_slots.release()
 
     worker = threading.Thread(target=run, name="ibm-runtime-call", daemon=True)
     worker.start()
@@ -99,8 +136,10 @@ def _has_saved_account() -> bool:
 
 def configured_connection_mode() -> str:
     with _lock:
-        if _service is not None:
-            return _connection_mode
+        if _state().service is not None:
+            return _state().connection_mode
+    if os.getenv("QUANTUM_COMPOSER_ALLOW_SERVER_ACCOUNT") != "1":
+        return "none"
     if os.getenv("IBM_QUANTUM_API_KEY", "").strip():
         return "environment"
     if _has_saved_account():
@@ -109,6 +148,8 @@ def configured_connection_mode() -> str:
 
 
 def _build_configured_service() -> tuple[Any, str, str | None]:
+    if os.getenv("QUANTUM_COMPOSER_ALLOW_SERVER_ACCOUNT") != "1":
+        raise IBMConnectionError("Connect your own IBM account first. Shared server accounts are disabled.")
     if not ibm_runtime_available():
         raise IBMConnectionError(
             "IBM backend discovery requires the optional qiskit-ibm-runtime dependency. "
@@ -134,23 +175,22 @@ def _build_configured_service() -> tuple[Any, str, str | None]:
 
 
 def get_service() -> Any:
-    global _service, _connection_mode, _instance_hint, _account_error
     with _lock:
-        if _service is not None:
-            return _service
+        if _state().service is not None:
+            return _state().service
     try:
         service, mode, instance_hint = _build_configured_service()
     except IBMConnectionError:
         raise
     except Exception as error:
         with _lock:
-            _account_error = _public_error("connect")
+            _state().account_error = _public_error("connect")
         raise IBMConnectionError(_public_error("connect")) from error
     with _lock:
-        _service = service
-        _connection_mode = mode
-        _instance_hint = instance_hint
-        _account_error = None
+        _state().service = service
+        _state().connection_mode = mode
+        _state().instance_hint = instance_hint
+        _state().account_error = None
         return service
 
 
@@ -160,7 +200,6 @@ def connect_session(token: str, instance: str | None, channel: str) -> Connectio
     The caller is responsible for enforcing HTTPS/localhost and rate limits.
     """
 
-    global _service, _connection_mode, _instance_hint, _account_error
     if not ibm_runtime_available():
         raise IBMConnectionError(
             "Session connection requires the optional qiskit-ibm-runtime dependency on the server."
@@ -178,31 +217,30 @@ def connect_session(token: str, instance: str | None, channel: str) -> Connectio
         raise
     except Exception as error:
         with _lock:
-            _account_error = _public_error("authenticate")
+            _state().account_error = _public_error("authenticate")
         raise IBMConnectionError(_public_error("authenticate")) from error
 
     with _lock:
-        _service = service
-        _connection_mode = "session"
-        _instance_hint = _hint(instance)
-        _account_error = None
+        _state().service = service
+        _state().connection_mode = "session"
+        _state().instance_hint = _hint(instance)
+        _state().account_error = None
     return connection_status()
 
 
 def disconnect() -> ConnectionStatus:
-    global _service, _connection_mode, _instance_hint, _account_error
     with _lock:
-        _service = None
-        _connection_mode = "none"
-        _instance_hint = None
-        _account_error = None
+        _state().service = None
+        _state().connection_mode = "none"
+        _state().instance_hint = None
+        _state().account_error = None
     return connection_status()
 
 
 def connection_status() -> ConnectionStatus:
     with _lock:
-        service_connected = _service is not None
-        active_mode = _connection_mode if service_connected else configured_connection_mode()
+        service_connected = _state().service is not None
+        active_mode = _state().connection_mode if service_connected else configured_connection_mode()
         return ConnectionStatus(
             ibm_runtime_installed=ibm_runtime_available(),
             ibm_runtime_version=ibm_runtime_version(),
@@ -210,8 +248,8 @@ def connection_status() -> ConnectionStatus:
             qasm3_import_available=qasm3_import_available(),
             connection_mode=active_mode,
             connected=service_connected,
-            instance_hint=_instance_hint,
-            account_error=_account_error,
+            instance_hint=_state().instance_hint,
+            account_error=_state().account_error,
             execution_enabled=False,
         )
 

@@ -33,8 +33,10 @@ function encodeCompressed(circuit: unknown): string {
 export async function requireBackend(): Promise<boolean> {
   try {
     const response = await fetch("http://localhost:8000/health");
+    if (!response.ok && process.env.REQUIRE_BACKEND === "1") throw new Error("Integration backend health check failed.");
     return response.ok;
   } catch {
+    if (process.env.REQUIRE_BACKEND === "1") throw new Error("The required integration backend is unreachable.");
     return false;
   }
 }

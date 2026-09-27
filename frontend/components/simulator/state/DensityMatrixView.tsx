@@ -147,8 +147,9 @@ export function DensityMatrixView({ state }: { state: StateAnalysisResponse }) {
           <p className="instrument-label">Eigenvalue spectrum</p>
           <p className="mt-1 text-[10px] leading-4 text-lab-faint">
             Descending. A pure state has one eigenvalue ≈ 1 and the rest ≈ 0; the entropy above is computed from
-            exactly this spectrum. Values below 10⁻⁴ are omitted here (full list in the JSON export).
+            the complete spectrum when available. The export contains at most 64 eigenvalues; this view shows at most 16 values above 10⁻⁴.
           </p>
+          <p className="mt-1 text-[10px] text-lab-faint">Returned {String(metrics.spectrum_returned_count ?? eigenvalues.length)} of {String(metrics.spectrum_total_count ?? eigenvalues.length)} eigenvalues; omitted weight: {typeof metrics.spectrum_omitted_weight === "number" ? metrics.spectrum_omitted_weight.toFixed(6) : "unavailable"}.</p>
           <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label="Density matrix eigenvalues">
             {eigenvalues.filter((value) => value >= 1e-4).slice(0, 16).map((value, index) => (
               <li key={index} className="rounded-md border border-lab-border bg-lab-bg px-2 py-0.5 font-mono text-[11px] text-lab-muted">

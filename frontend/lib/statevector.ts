@@ -1,7 +1,8 @@
 // Tiny client-side statevector simulator for the Composer's live state
 // preview. Deliberately bounded: it refuses anything above MAX_PREVIEW_QUBITS
 // (2^5 = 32 amplitudes), applies the ideal unitary only, and *ignores*
-// measurement and barrier operations — it shows the pre-measurement ideal
+// terminal measurement and barrier operations, rejecting mid-circuit
+// measurement followed by a gate on that qubit — it shows the pre-measurement ideal
 // state, which is exactly what the preview labels say. This is an educational
 // preview, not a replacement for the backend engines.
 //
@@ -86,12 +87,15 @@ export function computeStatePreview(circuit: ResolvedCircuit): StatePreview | nu
 
   let ignoredMeasurements = 0;
   const ordered = canonicalOperationOrder(circuit.operations);
+  const measured = new Set<number>();
   for (const operation of ordered) {
     if (operation.gate === "measure") {
+      measured.add(operation.qubits[0]);
       ignoredMeasurements += 1;
       continue;
     }
     if (operation.gate === "barrier") continue;
+    if (operation.qubits.some(qubit => measured.has(qubit))) return null;
     // Reset is a quantum channel, not a unitary. A pure-state preview cannot
     // represent its generally mixed output honestly; Simulator Lab can.
     if (operation.gate === "reset") return null;

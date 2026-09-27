@@ -182,6 +182,8 @@ def test_mps_state_analysis_flags_configured_truncation():
     assert response.status_code == 200
     state = response.json()["state_analysis"]
     assert state["available"] is True
+    assert state["global_metrics"]["exact"] is False
+    assert state["global_metrics"]["exactness"] == "approximation_possible"
     assert any("approximate" in w.lower() for w in state["warnings"])
 
 

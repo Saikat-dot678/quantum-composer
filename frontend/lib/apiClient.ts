@@ -26,40 +26,50 @@ export function getApiUrl(): string {
   return API_URL;
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<T> {
+let accountSession: string | null = null;
+function sessionId(): string {
+  if (accountSession) return accountSession;
+  const key = "quantum-composer.account-session";
+  try { accountSession = window.sessionStorage.getItem(key); } catch { /* in-memory fallback */ }
+  if (!accountSession || !/^[a-f0-9]{64}$/.test(accountSession)) {
+    accountSession = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, "0")).join("");
+    try { window.sessionStorage.setItem(key, accountSession); } catch { /* in-memory fallback */ }
+  }
+  return accountSession;
+}
+
+export async function apiRequest<T>(path: string, init: RequestInit = {}, timeoutMs = 90_000): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-
-  const controller = timeoutMs ? new AbortController() : null;
-  const timeout = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
-
-  let response: Response;
+  if (path.startsWith("/hardware/")) headers.set("X-Quantum-Session", sessionId());
+  const controller = new AbortController();
+  let timedOut = false;
+  const abort = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) abort();
+  else init.signal?.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
-    response = await fetch(`${API_URL}${path}`, {
-      cache: "no-store",
-      ...init,
-      headers,
-      signal: controller?.signal ?? init.signal,
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(`The backend did not respond within ${Math.ceil((timeoutMs ?? 0) / 1000)} seconds.`);
+    const response = await fetch(`${API_URL}${path}`, { cache: "no-store", ...init, headers, signal: controller.signal });
+    const payload = await response.json().catch((error: unknown) => {
+      if (controller.signal.aborted) throw error;
+      return null;
+    }) as unknown;
+    if (!response.ok) {
+      const detail = payload && typeof payload === "object" && "detail" in payload
+        ? (payload as { detail?: unknown }).detail : null;
+      throw new Error(formatDetail(detail, `Backend request failed (${response.status} ${response.statusText}).`));
     }
-    throw new Error(
-      `The Quantum Composer backend is unreachable at ${API_URL}. Start the FastAPI service and confirm NEXT_PUBLIC_API_URL, then retry.`,
-    );
+    if (payload === null) throw new Error("The backend returned an invalid JSON response.");
+    return payload as T;
+  } catch (error) {
+    if (timedOut) throw new Error(`The backend did not respond within ${Math.ceil(timeoutMs / 1000)} seconds.`);
+    if (init.signal?.aborted) throw new DOMException("The request was canceled.", "AbortError");
+    if (error instanceof TypeError) throw new Error(`The Quantum Composer backend is unreachable at ${API_URL}. Confirm the service is running and retry.`);
+    throw error;
   } finally {
-    if (timeout !== null) window.clearTimeout(timeout);
+    clearTimeout(timeout);
+    init.signal?.removeEventListener("abort", abort);
   }
-
-  const payload = (await response.json().catch(() => null)) as unknown;
-  if (!response.ok) {
-    const detail = payload && typeof payload === "object" && "detail" in payload
-      ? (payload as { detail?: unknown }).detail
-      : null;
-    throw new Error(formatDetail(detail, `Backend request failed (${response.status} ${response.statusText}).`));
-  }
-  return payload as T;
 }
 
 export function apiPost<T>(path: string, body: unknown): Promise<T> {

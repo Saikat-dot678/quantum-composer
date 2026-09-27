@@ -114,6 +114,10 @@ def simulate_e91(
     errors = sum(1 for a, b in zip(sifted_alice, sifted_bob) if a != b)
     qber = (errors / len(sifted_alice)) if sifted_alice else 0.0
 
+    chsh_settings = [(a0, b0), (a0, b2), (a2, b0), (a2, b2)]
+    sufficient = all(corr_cnt.get(setting, 0) >= 2 for setting in chsh_settings)
+    standard_error = (math.sqrt(sum((1 - correlation(*setting) ** 2) / corr_cnt[setting]
+                                  for setting in chsh_settings)) if sufficient else None)
     correlations = {
         f"A{_degrees(_ALICE_ANGLES[ai])}_B{_degrees(_BOB_ANGLES[bi])}": round(
             correlation(ai, bi), 4
@@ -161,7 +165,11 @@ def simulate_e91(
         "bob_choices": bob_choices[:512],
         "correlations": correlations,
         "chsh_s": abs(chsh_s),
-        "chsh_violation": abs(chsh_s) > 2.0,
+        "chsh_violation": sufficient and abs(chsh_s) > 2.0,
+        "chsh_status": "finite_sample_indicator" if sufficient else "insufficient_data",
+        "chsh_standard_error": standard_error,
+        "setting_counts": {f"A{_degrees(_ALICE_ANGLES[ai])}_B{_degrees(_BOB_ANGLES[bi])}": corr_cnt.get((ai, bi), 0)
+                           for ai in range(3) for bi in range(3)},
         "qber": qber,
         "sifted_key_alice": sifted_alice,
         "sifted_key_bob": sifted_bob,

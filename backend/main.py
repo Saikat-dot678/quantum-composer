@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from execution import execute
 from fastapi.middleware.cors import CORSMiddleware
 
 from analysis.circuit_analyzer import analyze_circuit
@@ -18,7 +21,6 @@ from engines.base import (
 )
 from engines.crypto_protocols import get_runner
 from engines.router import available_engines
-from engines.router import simulate as route_simulation
 from hardware.routes import router as hardware_router
 from schemas import (
     AdvancedCircuitRequest,
@@ -36,7 +38,6 @@ from schemas import (
     SimulationV2Response,
     ValidationResponse,
 )
-from simulator import simulate
 
 
 DEFAULT_CORS_ORIGINS = (
@@ -82,10 +83,19 @@ app.add_middleware(
     allow_origins=configured_cors_origins(),
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-Quantum-Session"],
 )
 
 app.include_router(hardware_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def redacted_validation_error(_request: Request, error: RequestValidationError):
+    return JSONResponse(status_code=422, content={"detail": [
+        {"loc": list(item["loc"]), "type": item["type"], "msg": item["msg"]}
+        for item in error.errors()
+    ]})
+
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +125,9 @@ def qiskit_code(request: CircuitRequest) -> CodeResponse:
 @app.post("/circuit/simulate", response_model=SimulationResponse)
 def simulate_circuit(request: CircuitRequest) -> SimulationResponse:
     try:
-        return SimulationResponse(**simulate(request))
+        return SimulationResponse(**execute("v1", request.model_dump(mode="json")))
+    except HTTPException:
+        raise
     except QuantumDependencyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -127,6 +139,8 @@ def qasm(request: CircuitRequest) -> QasmResponse:
     try:
         circuit = build_circuit(request)
         return QasmResponse(qasm=generate_qasm(circuit))
+    except HTTPException:
+        raise
     except QuantumDependencyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -140,6 +154,8 @@ def qasm3(request: CircuitRequest) -> QasmResponse:
     try:
         circuit = build_circuit(request)
         return QasmResponse(qasm=generate_qasm3(circuit))
+    except HTTPException:
+        raise
     except QuantumDependencyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -188,13 +204,15 @@ def analyze(request: AdvancedCircuitRequest) -> CircuitAnalysisResponse:
 @app.post("/circuit/simulate-v2", response_model=SimulationV2Response)
 def simulate_v2(request: SimulateV2Request) -> SimulationV2Response:
     try:
-        result = route_simulation(request.circuit, request.options)
+        result = execute("v2", request.model_dump(mode="json"))
         return SimulationV2Response(**result)
     except EngineNotAvailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (InfeasibleCircuitError, UnsupportedGateError) as exc:
         # Honest rejection of an impossible/unsupported circuit -> 422 with reason.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except QuantumDependencyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

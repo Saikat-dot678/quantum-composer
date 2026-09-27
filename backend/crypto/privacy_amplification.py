@@ -53,7 +53,7 @@ def secure_key_length(sifted_length: int, qber: float, security_parameter: int =
     both error correction and Eve's information), minus a small security margin.
     Returns 0 when the error rate is too high to distil a secure key.
     """
-    if sifted_length <= 0:
+    if sifted_length <= 0 or not math.isfinite(qber) or qber < 0.0 or qber > 0.11:
         return 0
     rate = 1.0 - 2.0 * binary_entropy(qber)
     if rate <= 0.0:

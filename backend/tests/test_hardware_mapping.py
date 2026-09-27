@@ -25,7 +25,7 @@ from hardware.targets import build_manual_target
 from main import app
 
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Quantum-Session": "a" * 64})
 
 
 def circuit_source(operations=None, *, num_qubits=3, num_clbits=0):
@@ -227,10 +227,10 @@ def test_backend_comparison_is_transparent_and_does_not_rank_by_queue():
 
 
 def _reset_ibm_state(monkeypatch):
-    monkeypatch.setattr(ibm_service, "_service", None)
-    monkeypatch.setattr(ibm_service, "_connection_mode", "none")
-    monkeypatch.setattr(ibm_service, "_instance_hint", None)
-    monkeypatch.setattr(ibm_service, "_account_error", None)
+    from contextvars import ContextVar
+    monkeypatch.setattr(ibm_service, "account_context", ContextVar("test_account", default=ibm_service.AccountState()))
+    monkeypatch.setattr(ibm_service, "_sessions", {})
+    monkeypatch.delenv("QUANTUM_COMPOSER_ALLOW_SERVER_ACCOUNT", raising=False)
 
 
 def test_no_credentials_returns_redacted_discovery_state(monkeypatch):
@@ -239,7 +239,7 @@ def test_no_credentials_returns_redacted_discovery_state(monkeypatch):
     monkeypatch.setattr(ibm_service, "_has_saved_account", lambda: False)
     response = client.get("/hardware/backends?source=ibm")
     assert response.status_code == 503
-    assert "No IBM Quantum account" in response.json()["detail"]
+    assert "Connect your own IBM account" in response.json()["detail"]
     assert "token" not in response.text.lower()
 
 
@@ -272,7 +272,7 @@ def test_execution_is_explicitly_disabled_in_public_status():
 
 
 def test_session_credentials_require_https_outside_localhost():
-    external = TestClient(app, base_url="http://hardware.example")
+    external = TestClient(app, base_url="http://hardware.example", headers={"X-Quantum-Session": "b" * 64})
     response = external.post(
         "/hardware/connect",
         json={"token": "not-a-real-token", "channel": "ibm_quantum_platform"},
@@ -288,8 +288,8 @@ def test_mock_ibm_discovery_handles_no_backends_and_missing_optional_metadata(mo
         def backends(self, **kwargs):
             return []
 
-    monkeypatch.setattr(ibm_service, "_service", EmptyService())
-    monkeypatch.setattr(ibm_service, "_connection_mode", "session")
+    monkeypatch.setattr(ibm_service._state(), "service", EmptyService())
+    monkeypatch.setattr(ibm_service._state(), "connection_mode", "session")
     assert ibm_service.list_ibm_backends() == []
 
     source = GenericTargetSource(kind="generic", topology="line", num_qubits=3, seed=1, noise=False)
@@ -308,7 +308,7 @@ def test_mock_ibm_discovery_handles_no_backends_and_missing_optional_metadata(mo
         def backends(self, **kwargs):
             return [backend]
 
-    monkeypatch.setattr(ibm_service, "_service", OneBackendService())
+    monkeypatch.setattr(ibm_service._state(), "service", OneBackendService())
     summaries = ibm_service.list_ibm_backends()
     assert len(summaries) == 1
     assert summaries[0].name == "ibm_mock"

@@ -34,8 +34,8 @@ function Analyzer({ actor, angles, counts, tone }: { actor: string; angles: numb
 export function E91Panel({ result }: { result: E91Result }) {
   const classical = result.charts_data.chsh_classical_bound;
   const quantum = result.charts_data.chsh_quantum_bound;
-  const samplePosition = Math.max(0, Math.min(100, (result.chsh_s / quantum) * 100));
-  const classicalPosition = (classical / quantum) * 100;
+  const samplePosition = Math.max(0, Math.min(100, (result.chsh_s / 4) * 100));
+  const classicalPosition = (classical / 4) * 100;
   const aliceCounts = choiceCounts(result.alice_choices, result.alice_angles_deg.length);
   const bobCounts = choiceCounts(result.bob_choices, result.bob_angles_deg.length);
   const pairSample = Array.from({ length: Math.min(18, result.alice_choices.length, result.bob_choices.length) }, (_, index) => {
@@ -47,6 +47,8 @@ export function E91Panel({ result }: { result: E91Result }) {
 
   return (
     <div>
+      {result.chsh_status && <p role="status" className="border-b border-lab-border p-3 text-xs">CHSH: {result.chsh_status.replaceAll("_", " ")}; estimated standard error: {result.chsh_standard_error?.toFixed(3) ?? "unavailable"}. This is a software-model diagnostic, not security certification.</p>}
+
       <div className="grid grid-cols-2 divide-x divide-y divide-lab-border border-b border-lab-border sm:grid-cols-4 sm:divide-y-0">
         <div className="px-4 py-3"><p className="instrument-label">Entangled pairs</p><p className="mt-1 font-mono text-base font-semibold text-lab-text">{result.num_pairs.toLocaleString()}</p></div>
         <div className="px-4 py-3"><p className="instrument-label">CHSH |S|</p><p className={`mt-1 font-mono text-base font-semibold ${result.chsh_violation ? "text-accent-green" : "text-accent-amber"}`}>{result.chsh_s.toFixed(3)}</p></div>
@@ -110,14 +112,14 @@ export function E91Panel({ result }: { result: E91Result }) {
 
         <div className="flex flex-col justify-center p-4 sm:p-5">
           <div className="flex items-center justify-between gap-3"><div><p className="instrument-label">CHSH evidence scale</p><p className="mt-1 font-mono text-2xl font-semibold text-lab-text">|S| {result.chsh_s.toFixed(3)}</p></div><Badge tone={result.chsh_violation ? "green" : "amber"} dot>{result.chsh_violation ? "above classical bound" : "no sampled violation"}</Badge></div>
-          <div className="relative mt-5 h-5 overflow-hidden rounded-full border border-lab-border bg-lab-raised" role="meter" aria-label={`CHSH absolute S ${result.chsh_s.toFixed(3)}; classical bound ${classical.toFixed(2)}; quantum maximum ${quantum.toFixed(2)}`} aria-valuemin={0} aria-valuemax={quantum} aria-valuenow={result.chsh_s}>
+          <div className="relative mt-5 h-5 overflow-hidden rounded-full border border-lab-border bg-lab-raised" role="meter" aria-label={`CHSH absolute S ${result.chsh_s.toFixed(3)}; classical bound ${classical.toFixed(2)}; quantum maximum ${quantum.toFixed(2)}`} aria-valuemin={0} aria-valuemax={4} aria-valuenow={result.chsh_s}>
             <span className="absolute inset-y-0 left-0 bg-accent-amber/12" style={{ width: `${classicalPosition}%` }} />
             <span className="absolute inset-y-0 right-0 bg-accent-green/[.09]" style={{ left: `${classicalPosition}%` }} />
             <span className="absolute inset-y-0 w-px bg-accent-amber" style={{ left: `${classicalPosition}%` }} />
             <span className={`absolute inset-y-0 w-1 -translate-x-1/2 rounded-full bg-accent-cyan shadow-glow ${styles.transitionWidth}`} style={{ left: `${samplePosition}%` }} />
           </div>
-          <div className="mt-2 flex justify-between font-mono text-[9px] text-lab-faint"><span>0</span><span>classical 2.00</span><span>quantum 2.83</span></div>
-          <p className="mt-4 text-[10px] leading-4 text-lab-muted">A value above 2 is evidence only inside this finite software sample. A physical claim would require controlled devices, source assumptions, and statistical analysis beyond this interface.</p>
+          <div className="mt-2 flex justify-between font-mono text-[9px] text-lab-faint"><span>0</span><span>classical 2.00</span><span>sample maximum 4</span></div>
+          <p className="mt-4 text-[10px] leading-4 text-lab-muted">The quantum expectation is bounded by 2√2 ≈ 2.83; a finite-sample estimate can exceed it. A value above 2 is only a sampled indicator. A physical claim would require controlled devices, source assumptions, and statistical analysis beyond this interface.</p>
         </div>
       </section>
 

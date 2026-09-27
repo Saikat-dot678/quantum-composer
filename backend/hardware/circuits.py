@@ -82,9 +82,17 @@ def circuit_from_source(source: CircuitSource) -> QuantumCircuit:
     if looks_like_python(text):
         raise CircuitImportError(PYTHON_REJECTION_MESSAGE)
 
+    allowed_include = "qelib1.inc" if source.kind == "qasm2" else "stdgates.inc"
+    includes = re.findall(r'\binclude\s+"([^"\n]+)"', text)
+    if any(name != allowed_include for name in includes):
+        raise CircuitImportError("Only the standard QASM gate-library include is allowed.")
+    sizes = [int(value) for value in re.findall(r"\b(?:qreg|creg)\s+\w+\s*\[\s*(\d+)\s*\]", text)]
+    sizes += [int(value) for value in re.findall(r"\b(?:qubit|bit)\s*\[\s*(\d+)\s*\]", text)]
+    if sum(sizes) > 2 * MAX_TRANSPILE_QUBITS:
+        raise CircuitImportError("Declared register sizes exceed the hardware import limit.")
     if source.kind == "qasm2":
         try:
-            circuit = qasm2.loads(text)
+            circuit = qasm2.loads(text, include_path=())
         except Exception as error:
             raise CircuitImportError(f"OpenQASM 2 parsing failed: {error}") from error
         _enforce_size(circuit)

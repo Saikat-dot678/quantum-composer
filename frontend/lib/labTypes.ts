@@ -265,6 +265,8 @@ export interface PrivacyAmplificationResult {
 }
 
 export interface BB84Result {
+  protocol_status?: "insufficient_data" | "aborted" | "illustration_only";
+  qber_available?: boolean;
   num_bits: number;
   eve_enabled: boolean;
   eve_strategy: "intercept_resend" | null;
@@ -295,6 +297,9 @@ export interface BB84Result {
 }
 
 export interface E91Result {
+  chsh_status?: string;
+  chsh_standard_error?: number | null;
+  setting_counts?: Record<string, number>;
   num_pairs: number;
   eve_enabled: boolean;
   channel_error_rate: number;
