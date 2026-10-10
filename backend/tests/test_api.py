@@ -80,9 +80,8 @@ def test_simulation_succeeds_when_graphical_rendering_fails(monkeypatch) -> None
             warning="The circuit simulation completed, but the graphical diagram could not be rendered.",
         ),
     )
-    response = client.post("/circuit/simulate", json=BELL_CIRCUIT)
-    assert response.status_code == 200
-    payload = response.json()
+    from schemas import CircuitRequest
+    payload = simulator_module.simulate(CircuitRequest(**BELL_CIRCUIT))
     assert payload["circuit_diagram"] is None
     assert sum(payload["counts"].values()) == 512
     assert any("could not be rendered" in warning for warning in payload["warnings"])

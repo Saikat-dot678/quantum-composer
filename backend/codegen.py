@@ -48,7 +48,7 @@ def generate_qiskit_code(request: CircuitRequest) -> str:
                 f"label={label!r}), {list(q)})  # custom matrix-defined gate"
             )
 
-    lines = ["from qiskit import QuantumCircuit"]
+    lines = ["from qiskit import QuantumCircuit, transpile", "from qiskit.circuit import Clbit"]
     if has_unitary:
         lines.append("from qiskit.circuit.library import UnitaryGate")
     lines.append("from qiskit_aer import AerSimulator")
@@ -60,17 +60,22 @@ def generate_qiskit_code(request: CircuitRequest) -> str:
     if has_measurement:
         lines.extend(
             [
+                "circuit = transpile(circuit, simulator, optimization_level=0)",
                 f"result = simulator.run(circuit, shots={request.shots}).result()",
-                "counts = result.get_counts(circuit)",
+                'counts = {format(k, f"0{circuit.num_clbits}b"): v for k, v in result.get_counts(circuit).int_outcomes().items()}',
                 "print(counts)",
             ]
         )
     else:
         lines.extend(
             [
-                "measured_circuit = circuit.measure_all(inplace=False)",
+                "measured_circuit = circuit.copy()",
+                "if measured_circuit.num_clbits < measured_circuit.num_qubits:",
+                "    measured_circuit.add_bits([Clbit() for _ in range(measured_circuit.num_qubits - measured_circuit.num_clbits)])",
+                "measured_circuit.measure(range(circuit.num_qubits), range(circuit.num_qubits))",
+                "measured_circuit = transpile(measured_circuit, simulator, optimization_level=0)",
                 f"result = simulator.run(measured_circuit, shots={request.shots}).result()",
-                "counts = result.get_counts(measured_circuit)",
+                'counts = {format(k, f"0{measured_circuit.num_clbits}b"): v for k, v in result.get_counts(measured_circuit).int_outcomes().items()}',
                 "print(counts)",
             ]
         )

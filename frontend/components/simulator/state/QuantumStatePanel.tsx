@@ -1,4 +1,5 @@
 "use client";
+import { classicalProbabilities, type MeasurementMap } from "@/lib/measurement";
 
 // The "Quantum State" result tab: the actual simulated state returned by the
 // backend for this run (see backend/analysis/state_postprocessing.py and
@@ -181,14 +182,15 @@ function OverviewView({ state, shots, timingMs }: { state: StateAnalysisResponse
   );
 }
 
-function CountsComparison({ state, counts, shots }: { state: StateAnalysisResponse; counts: Record<string, number>; shots: number }) {
+function CountsComparison({ state, counts, shots, measurement }: { state: StateAnalysisResponse; counts: Record<string, number>; shots: number; measurement?: MeasurementMap }) {
   const rows = useMemo(() => {
-    const exactByBasis = new Map<string, number>();
-    for (const entry of displayEntries(state) ?? []) exactByBasis.set(entry.basis, entry.probability);
+    if (!measurement || isApproximate(state)) return [];
+    const exactByBasis = classicalProbabilities(displayEntries(state) ?? [], measurement);
+    if (!exactByBasis) return [];
     const bases = new Set<string>([...exactByBasis.keys(), ...Object.keys(counts)]);
     return [...bases]
       .map((basis) => {
-        const exact = exactByBasis.get(basis) ?? null;
+        const exact = exactByBasis.get(basis) ?? 0;
         const count = counts[basis] ?? 0;
         const frequency = shots > 0 ? count / shots : 0;
         return { basis, exact, count, frequency, delta: exact !== null ? Math.abs(exact - frequency) : null };
@@ -196,7 +198,7 @@ function CountsComparison({ state, counts, shots }: { state: StateAnalysisRespon
       .filter((row) => (row.exact ?? 0) > 1e-10 || row.count > 0)
       .sort((left, right) => (right.exact ?? right.frequency) - (left.exact ?? left.frequency))
       .slice(0, 24);
-  }, [state, counts, shots]);
+  }, [state, counts, shots, measurement]);
 
   if (rows.length === 0 || rows.every((row) => row.exact === null)) return null;
 
@@ -236,14 +238,14 @@ function CountsComparison({ state, counts, shots }: { state: StateAnalysisRespon
   );
 }
 
-function ProbabilitiesView({ state, counts, shots }: { state: StateAnalysisResponse; counts: Record<string, number> | null; shots: number | null }) {
+function ProbabilitiesView({ state, counts, shots, measurement }: { state: StateAnalysisResponse; counts: Record<string, number> | null; shots: number | null; measurement?: MeasurementMap }) {
   const entries = displayEntries(state);
   const marginals = state.per_qubit?.filter((entry) => entry.marginal_probability_1 !== null) ?? [];
 
   return (
     <div className="space-y-4">
       <Callout tone="info">
-        These are exact theoretical probabilities computed from the returned quantum state -- not sampled
+        These are theoretical probabilities computed from the returned quantum state; truncated MPS states may approximate the circuit. They are not sampled
         shot counts. Compare against the Distribution tab, which shows actual sampled measurement outcomes.
       </Callout>
       {entries && entries.length > 0 ? (
@@ -251,7 +253,7 @@ function ProbabilitiesView({ state, counts, shots }: { state: StateAnalysisRespo
       ) : (
         <p className="text-xs text-lab-faint">No per-basis-state probability list is available for this representation.</p>
       )}
-      {counts && shots !== null && shots > 0 && <CountsComparison state={state} counts={counts} shots={shots} />}
+      {counts && shots !== null && shots > 0 && <CountsComparison state={state} counts={counts} shots={shots} measurement={measurement} />}
       {marginals.length > 0 && (
         <div>
           <p className="instrument-label">Per-qubit marginal probability of |1⟩</p>
@@ -330,11 +332,13 @@ function NotRequestedView() {
 export function QuantumStatePanel({
   state,
   counts = null,
+  measurement,
   timingMs = null,
 }: {
   state: StateAnalysisResponse | null;
   /** Sampled counts from the same run, for the exact-vs-sampled comparison. */
   counts?: Record<string, number> | null;
+  measurement?: MeasurementMap;
   timingMs?: number | null;
 }) {
   const [view, setView] = useState<StateSubView>("overview");
@@ -387,7 +391,7 @@ export function QuantumStatePanel({
       </div>
       <div className="pt-4">
         {activeView === "overview" && <OverviewView state={state} shots={shots} timingMs={timingMs} />}
-        {activeView === "probabilities" && <ProbabilitiesView state={state} counts={counts} shots={shots} />}
+        {activeView === "probabilities" && <ProbabilitiesView state={state} counts={counts} shots={shots} measurement={measurement} />}
         {activeView === "phases" && <PhasesView state={state} />}
         {activeView === "bloch" && <BlochQubitView state={state} />}
         {activeView === "density" && <DensityMatrixView state={state} />}

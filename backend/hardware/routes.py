@@ -8,7 +8,10 @@ import time
 from collections import defaultdict, deque
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+import re
+from execution import execute
+from .ibm_service import account_context, session_state
 
 from .availability import fake_provider_available
 from .circuits import CircuitImportError
@@ -35,10 +38,27 @@ from .schemas import (
     TranspileResponse,
 )
 from .targets import TargetBuildError
-from .transpilation import TranspilationError, compare_request, import_circuit, transpile_request
+from .transpilation import TranspilationError, resolve_any_target
 
 
-router = APIRouter(prefix="/hardware", tags=["Hardware Mapping"])
+async def account_scope(request: Request):
+    key = request.headers.get("X-Quantum-Session")
+    if key is not None and not re.fullmatch(r"[a-f0-9]{64}", key):
+        raise HTTPException(400, "Invalid account session identifier.")
+    if request.url.path in {"/hardware/connect", "/hardware/disconnect"} and not key:
+        raise HTTPException(400, "An account session identifier is required.")
+    try:
+        state = session_state(key)
+    except IBMConnectionError as error:
+        raise HTTPException(429, str(error)) from error
+    token = account_context.set(state)
+    try:
+        yield
+    finally:
+        account_context.reset(token)
+
+
+router = APIRouter(prefix="/hardware", tags=["Hardware Mapping"], dependencies=[Depends(account_scope)])
 
 _attempts: dict[str, deque[float]] = defaultdict(deque)
 _attempt_lock = threading.Lock()
@@ -194,7 +214,7 @@ def hardware_describe(body: DescribeTargetRequest) -> BackendDetail:
 @router.post("/circuit/import", response_model=ImportCircuitResponse)
 def hardware_import(body: ImportCircuitRequest) -> ImportCircuitResponse:
     try:
-        return import_circuit(body)
+        return execute("hardware_import", body.model_dump(mode="json"))
     except CircuitImportError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -202,7 +222,8 @@ def hardware_import(body: ImportCircuitRequest) -> ImportCircuitResponse:
 @router.post("/transpile", response_model=TranspileResponse)
 def hardware_transpile(body: TranspileRequest) -> TranspileResponse:
     try:
-        return transpile_request(body)
+        targets = {0: resolve_any_target(body.target)} if body.target.kind == "ibm" else None
+        return execute("hardware_transpile", body.model_dump(mode="json"), trusted_targets=targets)
     except IBMConnectionError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except (CircuitImportError, TargetBuildError, TranspilationError) as error:
@@ -212,6 +233,13 @@ def hardware_transpile(body: TranspileRequest) -> TranspileResponse:
 @router.post("/compare", response_model=CompareResponse)
 def hardware_compare(body: CompareRequest) -> CompareResponse:
     try:
-        return compare_request(body)
+        targets = {}
+        for index, source in enumerate(body.targets):
+            if source.kind == "ibm":
+                try:
+                    targets[index] = resolve_any_target(source)
+                except IBMConnectionError as error:
+                    targets[index] = str(error)
+        return execute("hardware_compare", body.model_dump(mode="json"), trusted_targets=targets or None)
     except (CircuitImportError, TargetBuildError, TranspilationError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

@@ -65,6 +65,7 @@ export function BB84Panel({ result }: { result: BB84Result }) {
 
   return (
     <div>
+      {result.protocol_status && <p role="status" className="border-b border-lab-border p-3 text-xs">Protocol status: {result.protocol_status.replaceAll("_", " ")}. Disclosed test bits are removed before the Alice-side illustration. No shared or security-proven key is produced.</p>}
       <div className="grid grid-cols-2 divide-x divide-y divide-lab-border border-b border-lab-border sm:grid-cols-4 sm:divide-y-0">
         <Metric label="Transmitted" value={result.num_bits.toLocaleString()} detail="prepared qubits" />
         <Metric label="Basis matches" value={result.charts_data.basis_match_count.toLocaleString()} tone="text-accent-cyan" detail={`${formatPercent(result.charts_data.basis_match_count / result.num_bits)} retained`} />
@@ -110,7 +111,7 @@ export function BB84Panel({ result }: { result: BB84Result }) {
             role="meter"
             aria-label={`QBER ${formatPercent(result.qber)}, alert threshold ${formatPercent(threshold)}`}
             aria-valuemin={0}
-            aria-valuemax={50}
+            aria-valuemax={100}
             aria-valuenow={Math.round(result.qber * 100)}
             className="mx-auto grid h-36 w-36 place-items-center rounded-full p-3"
             style={{ background: `conic-gradient(${disturbed ? "#dc2626" : "#059669"} ${qberDegrees}%, #e4e4e7 ${qberDegrees}% 100%)` }}

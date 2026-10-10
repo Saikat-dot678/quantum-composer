@@ -1,4 +1,5 @@
 "use client";
+import type { MeasurementMap } from "@/lib/measurement";
 
 import { useState } from "react";
 import { formatEngineName, formatInteger } from "@/lib/formatting";
@@ -214,7 +215,7 @@ export function SimulationResultPanel({ result, loading, error, elapsedMs = 0, o
               <p className="instrument-label">Simulated quantum state</p>
               <p className="mt-1 text-[10px] text-lab-faint">The actual state returned by {formatEngineName(result.selected_engine)} for this run -- not the Composer&apos;s local live preview.</p>
             </div>
-            <QuantumStatePanel state={result.state_analysis} counts={result.counts} timingMs={result.timing_ms} />
+            <QuantumStatePanel state={result.state_analysis} counts={result.counts} measurement={result.metadata.measurement as MeasurementMap | undefined} timingMs={result.timing_ms} />
           </div>
         )}
 

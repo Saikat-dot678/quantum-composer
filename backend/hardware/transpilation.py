@@ -85,12 +85,17 @@ def _run_pass_manager(
         seed_transpiler=options.seed,
     )
 
-    original_swaps = circuit.count_ops().get("swap", 0)
+    # Decompose logical SWAPs before routing so only routing-introduced
+    # SWAP nodes contribute to the reported overhead.
+    routing_input = circuit.decompose(gates_to_decompose=["swap"])
     captured_pairs: list[tuple[int, int]] = []
 
     def callback(**kwargs: Any) -> None:
         nonlocal captured_pairs
         dag = kwargs.get("dag")
+        pass_ = kwargs.get("pass_")
+        if pass_ is None or pass_.name() not in {"SabreLayout", "SabreSwap", "BasicSwap", "LookaheadSwap", "StochasticSwap"}:
+            return
         if dag is None:
             return
         try:
@@ -107,12 +112,12 @@ def _run_pass_manager(
 
     started = time.perf_counter()
     try:
-        transpiled = pass_manager.run(circuit, callback=callback)
+        transpiled = pass_manager.run(routing_input, callback=callback)
     except Exception as error:
         raise TranspilationError(f"Qiskit could not map this circuit to the selected target: {error}") from error
     elapsed_ms = (time.perf_counter() - started) * 1000.0
 
-    inserted_pairs = captured_pairs[min(original_swaps, len(captured_pairs)) :]
+    inserted_pairs = captured_pairs
     swaps = [
         RoutingSwap(sequence=index + 1, physical_a=pair[0], physical_b=pair[1])
         for index, pair in enumerate(inserted_pairs)
@@ -259,9 +264,9 @@ def transpile_circuit(
     )
 
 
-def transpile_request(request: TranspileRequest) -> TranspileResponse:
+def transpile_request(request: TranspileRequest, *, resolved_target: tuple | None = None) -> TranspileResponse:
     circuit = circuit_from_source(request.circuit)
-    target, meta = resolve_any_target(request.target)
+    target, meta = resolved_target if resolved_target is not None else resolve_any_target(request.target)
     return transpile_circuit(circuit, target, meta, request.options)
 
 
@@ -285,15 +290,18 @@ def _calibration_averages(response: TranspileResponse, target: Any, meta: dict[s
     )
 
 
-def compare_request(request: CompareRequest) -> CompareResponse:
+def compare_request(request: CompareRequest, *, resolved_targets: dict | None = None) -> CompareResponse:
     circuit = circuit_from_source(request.circuit)
     entries: list[CompareEntry] = []
     successful: list[tuple[CompareEntry, float]] = []
 
-    for source in request.targets:
+    for index, source in enumerate(request.targets):
         source_name = getattr(source, "name", None) or getattr(source, "topology", None) or source.kind
         try:
-            target, meta = resolve_any_target(source)
+            resolved = (resolved_targets or {}).get(index)
+            if isinstance(resolved, str):
+                raise TargetBuildError(resolved)
+            target, meta = resolved if resolved is not None else resolve_any_target(source)
             result = transpile_circuit(circuit, target, meta, request.options)
             avg_readout, avg_edge = _calibration_averages(result, target, meta)
             entry = CompareEntry(

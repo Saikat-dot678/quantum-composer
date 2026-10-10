@@ -149,7 +149,7 @@ export function ProjectsDrawer({ open, onClose }: { open: boolean; onClose: () =
         const imported = await hardwareApi.importCircuit({ kind, text });
         const circuit = imported.normalized ? circuitFromQasmImport(imported.normalized, workspace.circuit.shots) : null;
         if (!circuit) { notifyFailure("The QASM parsed, but contains instructions or parameters the Composer cannot edit safely."); return; }
-        workspace.detachProject();
+        if (!workspace.detachProject()) return notifyFailure("The current project could not be saved.");
         workspace.loadCircuit(circuit);
         pushToast(`Imported ${file.name}: ${circuit.num_qubits} qubits and ${circuit.operations.length} operations.`, "success");
         onClose();
@@ -181,7 +181,7 @@ export function ProjectsDrawer({ open, onClose }: { open: boolean; onClose: () =
         }
       }
 
-      workspace.detachProject();
+      if (!workspace.detachProject()) return notifyFailure("The current project could not be saved.");
       workspace.loadCircuit(finalCircuit);
       pushToast(`Imported ${file.name}: ${finalCircuit.num_qubits} qubits and ${finalCircuit.operations.length} operations.`, "success");
       onClose();
@@ -247,7 +247,7 @@ export function ProjectsDrawer({ open, onClose }: { open: boolean; onClose: () =
               <div className="mt-3 flex flex-wrap gap-2 border-t border-lab-border pt-3">
                 <Button variant="quiet" size="sm" onClick={exportCircuit}>Export JSON</Button>
                 <Button variant="quiet" size="sm" onClick={() => fileInputRef.current?.click()}>Import JSON / QASM</Button>
-                {workspace.activeProjectId && <Button variant="quiet" size="sm" onClick={() => { workspace.detachProject(); pushToast("Detached from the project; this circuit now autosaves anonymously."); }}>Detach</Button>}
+                {workspace.activeProjectId && <Button variant="quiet" size="sm" onClick={() => { if (!workspace.detachProject()) return notifyFailure("The current project could not be saved."); pushToast("Detached from the project; this circuit now autosaves anonymously."); }}>Detach</Button>}
                 <input
                   ref={fileInputRef}
                   type="file"

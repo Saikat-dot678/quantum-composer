@@ -24,6 +24,7 @@ from engines.base import (
     stim_available,
 )
 from gate_registry import GATE_REGISTRY
+from engines.preparation import measurement_metadata
 from validators import canonical_operation_order
 
 ENGINE_ID = "stim_stabilizer"
@@ -55,8 +56,8 @@ def _load_stim():
     return stim
 
 
-def _ensure_sampling_work_is_safe(shots: int, width: int) -> int:
-    work_cells = int(shots) * max(int(width), 1)
+def _ensure_sampling_work_is_safe(shots: int, width: int, records: int = 0) -> int:
+    work_cells = int(shots) * max(int(width), int(records), 1)
     if work_cells > MAX_SAMPLE_WORK_CELLS:
         raise InfeasibleCircuitError(
             "Stim sampling request is too large for the synchronous API: "
@@ -78,6 +79,7 @@ def _stabilizer_generators(operations: Any, num_qubits: int) -> list[str]:
     """
     stim = _load_stim()
     sim = stim.TableauSimulator()
+    sim.set_num_qubits(num_qubits)
     tableau_circuit = stim.Circuit()
     for op in canonical_operation_order(list(operations)):
         if op.gate in _STIM_GATES:
@@ -85,7 +87,7 @@ def _stabilizer_generators(operations: Any, num_qubits: int) -> list[str]:
         # measure/barrier are meaningless to a tableau simulator; skipped.
     sim.do(tableau_circuit)
     tableau = sim.current_inverse_tableau().inverse()
-    return [str(tableau.z_output(k)) for k in range(num_qubits)]
+    return [("+" if tableau.z_output(k).sign.real > 0 else "-") + str(tableau.z_output(k))[1:].replace("_", "I")[::-1] for k in range(num_qubits)]
 
 
 def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
@@ -137,7 +139,7 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
         for q in range(num_qubits):
             circuit.append("M", [q])
             measurement_clbits.append(q)
-        width = num_qubits
+        width = measurement_metadata(request)["num_clbits"]
         warnings.append(
             "No measurement operations were supplied; all qubits were measured "
             "automatically for sampling."
@@ -150,7 +152,7 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
             "Stim engine requires at least one measurement or qubit to sample."
         )
 
-    work_cells = _ensure_sampling_work_is_safe(int(options.shots), width)
+    work_cells = _ensure_sampling_work_is_safe(int(options.shots), width, len(measurement_clbits))
 
     try:
         sampler = circuit.compile_sampler(seed=options.seed)

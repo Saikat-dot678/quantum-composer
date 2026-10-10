@@ -9,10 +9,15 @@ an honest explanation and concrete alternatives.
 from __future__ import annotations
 
 import time
+import hashlib
+import json
+import importlib.metadata
 from typing import Any
 
 from analysis.circuit_analyzer import analyze_circuit
 from engines import aer_density, aer_mps, aer_stabilizer, aer_statevector, stim_stabilizer
+from engines.limits import enforce_options
+from engines.preparation import measurement_metadata
 from engines.base import (
     EngineResult,
     InfeasibleCircuitError,
@@ -248,6 +253,8 @@ def _maybe_graphical_diagram(request: Any, num_qubits: int, operation_count: int
 
 def simulate(request: Any, options: Any) -> dict[str, Any]:
     """Analyze, route and run a circuit, returning a full v2 response dict."""
+    requested_memory_mb = options.max_memory_mb
+    options = enforce_options(request, options)
     analysis = analyze_circuit(
         num_qubits=request.num_qubits,
         num_clbits=request.num_clbits,
@@ -262,6 +269,9 @@ def simulate(request: Any, options: Any) -> dict[str, Any]:
         engine_id, auto_reason = choose_engine(analysis, options)
     else:
         engine_id = requested
+
+    if options.noise_enabled and engine_id != "aer_density_matrix":
+        raise InfeasibleCircuitError("Noise is supported only by Auto or the density-matrix engine; the requested noise will not be ignored.")
 
     runner = _ENGINE_RUNNERS.get(engine_id)
     if runner is None:
@@ -293,6 +303,12 @@ def simulate(request: Any, options: Any) -> dict[str, Any]:
         "circuit_diagram": rendered.payload,
         "metadata": {
             **result.metadata,
+            "measurement": measurement_metadata(request),
+            "circuit_fingerprint": hashlib.sha256(json.dumps(request.model_dump(), sort_keys=True).encode()).hexdigest(),
+            "requested_memory_mb": requested_memory_mb,
+            "effective_memory_mb": options.max_memory_mb,
+            "applied_options": options.model_dump(mode="json"),
+            "engine_version": importlib.metadata.version("stim" if engine_id == "stim_stabilizer" else "qiskit-aer"),
             "requested_engine": requested,
             "auto_selected": auto_reason is not None,
             "is_clifford": analysis["is_clifford"],

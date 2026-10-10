@@ -74,11 +74,10 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
                 circuit, base * mult1, base * mult2
             )
             warnings.append(
-                f"Applied depolarizing noise model '{options.noise_model_type}'."
+                f"Applied depolarizing noise model '{options.noise_model_type}' per lowered u/cx/id gate, including decomposed custom gates."
             )
         except Exception as exc:  # pragma: no cover - defensive
-            warnings.append(f"Failed to build noise model, running noiseless: {exc}")
-            noise_model = None
+            raise InfeasibleCircuitError("The requested noise model could not be constructed; refusing a noiseless fallback.") from exc
     else:
         warnings.append(
             "Density-matrix engine selected without noise; results match the ideal "

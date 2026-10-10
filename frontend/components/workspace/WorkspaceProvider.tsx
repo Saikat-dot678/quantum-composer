@@ -13,6 +13,7 @@ import {
   type SetStateAction,
 } from "react";
 import { validateCircuitData } from "@/lib/circuitShare";
+import { CUSTOM_GATE_LIBRARY_EVENT } from "@/lib/customGateRepository";
 import { PRESETS } from "@/lib/presets";
 import {
   consumeProjectRecoveryNotice,
@@ -20,6 +21,7 @@ import {
   duplicateProject as duplicateStoredProject,
   getLastActiveProjectId,
   getProject,
+  restoreProjectCircuit,
   MAX_PROJECT_OPERATIONS,
   renameProject as renameStoredProject,
   saveNewProject,
@@ -62,7 +64,7 @@ export interface WorkspaceValue {
   renameProject: (id: string, name: string) => ProjectMutation;
   duplicateProject: (id: string, openCopy?: boolean) => ProjectMutation;
   deleteProject: (id: string) => ProjectMutation<true>;
-  detachProject: () => void;
+  detachProject: () => boolean;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;
@@ -201,17 +203,52 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const flushPending = useCallback((): ProjectMutation => {
+    if (autosaveTimer.current !== null) {
+      window.clearTimeout(autosaveTimer.current);
+      autosaveTimer.current = null;
+    }
+    const target = circuitRef.current;
+    if (fingerprint(target) === savedFingerprint.current) return { ok: true };
+    const result = persistCircuit(target, activeProjectRef.current);
+    if (result.ok) markPersisted(target);
+    else { setSaveState("error"); setSaveError(result.reason ?? "Save failed; the current circuit was kept."); }
+    return result;
+  }, [persistCircuit, markPersisted]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const flush = () => { flushPending(); };
+    const visibility = () => { if (document.visibilityState === "hidden") flush(); };
+    const leaving = (event: BeforeUnloadEvent) => {
+      if (!flushPending().ok) { event.preventDefault(); event.returnValue = ""; }
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("beforeunload", leaving);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("beforeunload", leaving);
+    };
+  }, [hydrated, flushPending]);
+
   useEffect(() => {
     let restored = cloneCircuit(PRESETS[1].circuit);
     let restoredProjectId: string | null = null;
     let restoredProjectName: string | null = null;
+    let restoreSaveError: string | null = null;
     try {
       const lastProjectId = getLastActiveProjectId();
       const project = lastProjectId ? getProject(lastProjectId) : null;
       if (project) {
-        restored = cloneCircuit(project.circuit);
+        restored = restoreProjectCircuit(project);
         restoredProjectId = project.id;
         restoredProjectName = project.name;
+        if (fingerprint(restored) !== fingerprint(project.circuit)) {
+          const saved = updateProjectCircuit(project.id, restored);
+          if (!saved.ok) restoreSaveError = saved.reason ?? "The restored project could not be saved.";
+        }
         touchProject(project.id);
       } else {
         const raw = window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
@@ -226,13 +263,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setStorageNotice("Local workspace storage could not be read. The default Bell circuit was kept.");
     }
     circuitRef.current = restored;
-    savedFingerprint.current = fingerprint(restored);
+    savedFingerprint.current = restoreSaveError ? "" : fingerprint(restored);
     setCircuitState(restored);
     setActiveProjectId(restoredProjectId);
     activeProjectRef.current = restoredProjectId;
     setActiveProjectName(restoredProjectName);
-    setSaveState("saved");
-    setLastSavedAt(restoredProjectId ? Date.now() : null);
+    setSaveState(restoreSaveError ? "error" : "saved");
+    setSaveError(restoreSaveError);
+    setLastSavedAt(restoredProjectId && !restoreSaveError ? Date.now() : null);
     setHydrated(true);
   }, []);
 
@@ -247,7 +285,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setSaveState("unsaved");
     autosaveTimer.current = window.setTimeout(() => {
       setSaveState("saving");
-      const result = persistCircuit(circuit, activeProjectRef.current);
+      const result = persistCircuit(circuit, activeProjectId);
       if (result.ok) {
         markPersisted(circuit);
         if (activeProjectRef.current) setProjectRevision((version) => version + 1);
@@ -259,7 +297,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       if (autosaveTimer.current !== null) window.clearTimeout(autosaveTimer.current);
     };
-  }, [circuit, hydrated, markPersisted, persistCircuit]);
+  }, [circuit, activeProjectId, hydrated, markPersisted, persistCircuit]);
+
+  useEffect(() => {
+    const changed = () => {
+      if (!circuitRef.current.operations.some(operation => operation.gate === "custom")) return;
+      savedFingerprint.current = "";
+      setSaveState("unsaved");
+      setCircuitState(cloneCircuit(circuitRef.current));
+    };
+    window.addEventListener(CUSTOM_GATE_LIBRARY_EVENT, changed);
+    return () => window.removeEventListener(CUSTOM_GATE_LIBRARY_EVENT, changed);
+  }, []);
 
   const bindProject = useCallback((id: string, name: string, next: CircuitData) => {
     setActiveProjectId(id);
@@ -272,17 +321,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [markPersisted, replaceWithoutHistory]);
 
   const createProject = useCallback((name = "Untitled circuit"): ProjectMutation => {
+    const flushed = flushPending();
+    if (!flushed.ok) return flushed;
     const next = cloneCircuit(EMPTY_CIRCUIT);
     const result = saveNewProject(name, next);
     if (result.ok && result.value) bindProject(result.value.id, result.value.name, next);
     return result;
-  }, [bindProject]);
+  }, [bindProject, flushPending]);
 
   const saveAsProject = useCallback((name: string): ProjectMutation => {
+    const flushed = flushPending();
+    if (!flushed.ok) return flushed;
     const result = saveNewProject(name, circuitRef.current);
     if (result.ok && result.value) bindProject(result.value.id, result.value.name, circuitRef.current);
     return result;
-  }, [bindProject]);
+  }, [bindProject, flushPending]);
 
   const saveActiveProject = useCallback((): ProjectMutation => {
     const id = activeProjectRef.current;
@@ -300,12 +353,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [markPersisted, persistCircuit]);
 
   const openProject = useCallback((id: string): boolean => {
+    if (!flushPending().ok) return false;
     const project = getProject(id);
     if (!project) return false;
-    touchProject(id);
-    bindProject(project.id, project.name, project.circuit);
+    try {
+      const restored = restoreProjectCircuit(project);
+      const saved = updateProjectCircuit(id, restored);
+      if (!saved.ok) { setSaveError(saved.reason ?? "Restore failed."); return false; }
+      touchProject(id);
+      bindProject(project.id, project.name, restored);
+    } catch (error) { setSaveError(error instanceof Error ? error.message : "Restore failed."); return false; }
     return true;
-  }, [bindProject]);
+  }, [bindProject, flushPending]);
 
   const renameProject = useCallback((id: string, name: string): ProjectMutation => {
     const result = renameStoredProject(id, name);
@@ -317,27 +376,32 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const duplicateProject = useCallback((id: string, openCopy = false): ProjectMutation => {
+    const flushed = flushPending();
+    if (!flushed.ok) return flushed;
     const result = duplicateStoredProject(id);
     if (result.ok && result.value) {
       setProjectRevision((version) => version + 1);
       if (openCopy) bindProject(result.value.id, result.value.name, result.value.circuit);
     }
     return result;
-  }, [bindProject]);
+  }, [bindProject, flushPending]);
 
   const detachProject = useCallback(() => {
+    if (!flushPending().ok) return false;
+    const saved = persistCircuit(circuitRef.current, null);
+    if (!saved.ok) { setSaveState("error"); setSaveError(saved.reason ?? "Detach failed."); return false; }
     setActiveProjectId(null);
     activeProjectRef.current = null;
     setActiveProjectName(null);
     setLastActiveProjectId(null);
-    savedFingerprint.current = "";
-    setSaveState("unsaved");
-  }, []);
+    markPersisted(circuitRef.current);
+    return true;
+  }, [flushPending, persistCircuit, markPersisted]);
 
   const deleteProject = useCallback((id: string): ProjectMutation<true> => {
+    if (id === activeProjectRef.current && !detachProject()) return { ok: false, reason: "The circuit could not be preserved; the project was not deleted." };
     const result = removeStoredProject(id);
     if (result.ok) {
-      if (id === activeProjectRef.current) detachProject();
       setProjectRevision((version) => version + 1);
     }
     return result;

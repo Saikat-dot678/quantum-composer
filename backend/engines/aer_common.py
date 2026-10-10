@@ -11,7 +11,7 @@ from typing import Any, Sequence
 
 from circuit_builder import QuantumDependencyError, apply_operations, build_circuit, empty_circuit, ordered_operation_list
 from engines.base import EngineNotAvailableError
-from gate_registry import GATE_REGISTRY
+from engines.preparation import add_automatic_measurements, lower_for_aer, normalized_counts
 
 STATE_SAVE_LABEL = "quantum_composer_state"
 
@@ -36,7 +36,7 @@ def prepare_circuit(request: Any) -> tuple[Any, list[str]]:
     circuit = build_circuit(request)
     has_measurement = any(op.gate == "measure" for op in request.operations)
     if not has_measurement:
-        circuit = circuit.measure_all(inplace=False)
+        add_automatic_measurements(circuit)
         warnings.append(
             "No measurement operations were supplied; all qubits were measured "
             "automatically for sampling."
@@ -120,7 +120,7 @@ def _build_circuit_with_state_save(request: Any, save_instruction: str, no_measu
         apply_operations(circuit, measure_ops)
         semantic_point = "pre_measurement_state"
     else:
-        circuit.measure_all(inplace=True)
+        add_automatic_measurements(circuit)
         semantic_point = no_measurement_semantic_point
     return circuit, semantic_point
 
@@ -180,13 +180,15 @@ def run_aer_with_state(
     try:
         if want_state and state_unavailable_reason is None:
             circuit, semantic_point = _build_circuit_with_state_save(request, save_instruction, no_measurement_semantic_point)
-            warnings: list[str] = []
+            warnings = ([] if any(op.gate == "measure" for op in request.operations) else [
+                "No measurement operations were supplied; all qubits were measured automatically for sampling."
+            ])
         else:
             circuit, warnings = prepare_circuit(request)
     except QuantumDependencyError as exc:
         raise EngineNotAvailableError(str(exc)) from exc
 
-    options: dict[str, Any] = {"method": method}
+    options: dict[str, Any] = {"method": method, "max_parallel_threads": 2, "max_parallel_experiments": 1}
     if backend_options:
         options.update(backend_options)
     if noise_model is not None:
@@ -197,9 +199,9 @@ def run_aer_with_state(
     if seed is not None:
         run_kwargs["seed_simulator"] = int(seed)
 
+    circuit = lower_for_aer(circuit, simulator, noisy=noise_model is not None)
     result = simulator.run(circuit, **run_kwargs).result()
-    raw_counts = result.get_counts(circuit)
-    counts = {str(state): int(count) for state, count in raw_counts.items()}
+    counts = normalized_counts(result, circuit)
 
     raw_state = None
     if want_state and state_unavailable_reason is None:
@@ -298,16 +300,8 @@ def build_depolarizing_noise_model(
     from qiskit_aer.noise import NoiseModel, depolarizing_error
 
     model = NoiseModel()
-    one_qubit_gates = [
-        spec.qiskit_method
-        for spec in GATE_REGISTRY.values()
-        if spec.is_unitary and spec.min_qubits == spec.max_qubits == 1 and spec.qiskit_method
-    ]
-    two_qubit_gates = [
-        spec.qiskit_method
-        for spec in GATE_REGISTRY.values()
-        if spec.is_unitary and spec.min_qubits == spec.max_qubits == 2 and spec.qiskit_method
-    ]
+    one_qubit_gates = ["u", "id"]
+    two_qubit_gates = ["cx"]
     if one_qubit_p > 0:
         err1 = depolarizing_error(min(max(one_qubit_p, 0.0), 1.0), 1)
         model.add_all_qubit_quantum_error(err1, one_qubit_gates)
@@ -333,7 +327,7 @@ def run_aer(
     except QuantumDependencyError as exc:
         raise EngineNotAvailableError(str(exc)) from exc
 
-    options: dict[str, Any] = {"method": method}
+    options: dict[str, Any] = {"method": method, "max_parallel_threads": 2, "max_parallel_experiments": 1}
     if backend_options:
         options.update(backend_options)
     if noise_model is not None:
@@ -344,7 +338,7 @@ def run_aer(
     if seed is not None:
         run_kwargs["seed_simulator"] = int(seed)
 
+    circuit = lower_for_aer(circuit, simulator, noisy=noise_model is not None)
     result = simulator.run(circuit, **run_kwargs).result()
-    raw_counts = result.get_counts(circuit)
-    counts = {str(state): int(count) for state, count in raw_counts.items()}
+    counts = normalized_counts(result, circuit)
     return counts, warnings

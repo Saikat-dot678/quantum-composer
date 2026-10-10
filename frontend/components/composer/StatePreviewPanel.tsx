@@ -16,7 +16,7 @@
 // automatically on edit -- both are explicit clicks.
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Badge, Button, Spinner } from "@/components/ui/primitives";
 import { useWorkspace } from "@/components/workspace/WorkspaceProvider";
 import type { CustomDefinition } from "@/lib/customGates";
@@ -63,8 +63,8 @@ function concurrence(preview: StatePreview): number | null {
 }
 
 function entanglementHint(value: number): { tone: "violet" | "green" | "neutral"; label: string; note: string } {
-  if (value > 0.98) return { tone: "violet", label: `maximally entangled · C ≈ ${value.toFixed(2)}`, note: "No single-qubit description exists for either qubit — that is why there is no Bloch sphere here." };
-  if (value > 0.05) return { tone: "violet", label: `entangled · C ≈ ${value.toFixed(2)}`, note: "The two qubits are correlated beyond any product state (concurrence > 0)." };
+  if (value > 0.98) return { tone: "violet", label: `maximally entangled · C ≈ ${value.toFixed(2)}`, note: "Each qubit has a mixed reduced state, with a Bloch vector inside the sphere; neither has its own pure-state vector." };
+  if (value > 1e-6) return { tone: "violet", label: `entangled · C ≈ ${value.toFixed(2)}`, note: "The two qubits are correlated beyond any product state (concurrence > 0)." };
   return { tone: "green", label: "product state · C ≈ 0", note: "Each qubit could be described independently on its own Bloch sphere." };
 }
 
@@ -78,13 +78,18 @@ export function StatePreviewPanel({ circuit, customLibrary }: { circuit: Circuit
     ? resolved.reason
     : resolved.circuit?.operations.some((operation) => operation.gate === "reset")
       ? "Reset is non-unitary and can produce a mixed state, so the pure-state browser preview stops here. Run Simulator Lab with density-matrix state analysis for the post-reset state."
-      : null;
+      : resolved.circuit && resolved.circuit.num_qubits <= MAX_PREVIEW_QUBITS && !preview
+        ? "A pure-state preview is unavailable for this measurement sequence. Use Simulator Lab to inspect its measurement semantics."
+        : null;
 
   const [comparison, setComparison] = useState<ComparisonState>({ kind: "idle" });
   // A stale comparison for a circuit the user has since edited would be
   // misleading -- drop it the moment the circuit changes. This never
   // triggers a new backend call by itself; it only clears the old one.
-  useEffect(() => setComparison({ kind: "idle" }), [circuit, customLibrary]);
+  const comparisonGeneration = useRef(0);
+  useEffect(() => { comparisonGeneration.current += 1; setComparison({ kind: "idle" });
+    return () => { comparisonGeneration.current += 1; };
+  }, [circuit, customLibrary]);
 
   function openInSimulatorLab() {
     if (!resolved.ok || !resolved.circuit) return;
@@ -94,6 +99,7 @@ export function StatePreviewPanel({ circuit, customLibrary }: { circuit: Circuit
 
   async function compareWithBackend() {
     if (!resolved.ok || !resolved.circuit) return;
+    const generation = ++comparisonGeneration.current;
     setComparison({ kind: "loading" });
     try {
       const response = await labApi.simulateV2(resolved.circuit, {
@@ -109,6 +115,7 @@ export function StatePreviewPanel({ circuit, customLibrary }: { circuit: Circuit
         include_state_analysis: true,
         state_detail: "full",
       });
+      if (generation !== comparisonGeneration.current) return;
       const state = response.state_analysis;
       if (!state || !state.available) {
         setComparison({ kind: "unavailable", reason: state?.unavailable_reason ?? "The backend did not return a state analysis for this circuit." });
@@ -122,6 +129,7 @@ export function StatePreviewPanel({ circuit, customLibrary }: { circuit: Circuit
         .sort((left, right) => right.backendProbability - left.backendProbability);
       setComparison({ kind: "done", sourceEngine: response.selected_engine, rows });
     } catch (error) {
+      if (generation !== comparisonGeneration.current) return;
       setComparison({ kind: "error", message: error instanceof Error ? error.message : "The comparison request failed." });
     }
   }

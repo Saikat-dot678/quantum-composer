@@ -15,7 +15,8 @@ from typing import Any
 
 from analysis.state_postprocessing import MAX_TOP_AMPLITUDES_QUBITS
 from engines.aer_common import build_state_analysis, run_aer_with_state
-from engines.base import EngineResult
+from engines.base import EngineResult, InfeasibleCircuitError
+from engines.limits import mps_bond_limit
 
 ENGINE_ID = "aer_mps"
 
@@ -31,18 +32,23 @@ MAX_STATE_QUBITS = MAX_TOP_AMPLITUDES_QUBITS
 
 def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
     num_qubits = analysis["num_qubits"]
-    backend_options: dict[str, Any] = {}
+    safe_bond = mps_bond_limit(num_qubits, options.max_memory_mb)
+    requested_bond = options.mps_max_bond_dimension
+    effective_bond = min(requested_bond or safe_bond, safe_bond)
+    # For small registers this bound exceeds the mathematical maximum bond.
+    safety_can_truncate = effective_bond < 2 ** min(num_qubits // 2, 30)
+    if safety_can_truncate and not options.allow_approximation and requested_bond is None:
+        raise InfeasibleCircuitError("The enforced MPS bond limit may truncate this circuit. Enable approximation explicitly or use a smaller circuit.")
+    backend_options: dict[str, Any] = {"matrix_product_state_max_bond_dimension": effective_bond, "matrix_product_state_truncation_threshold": options.mps_truncation_threshold or 1e-16}
     if options.mps_max_bond_dimension is not None:
-        backend_options["matrix_product_state_max_bond_dimension"] = int(
-            options.mps_max_bond_dimension
-        )
+        backend_options["matrix_product_state_max_bond_dimension"] = effective_bond
     if options.mps_truncation_threshold is not None:
         backend_options["matrix_product_state_truncation_threshold"] = float(
             options.mps_truncation_threshold
         )
 
     truncation_configured = (
-        options.mps_max_bond_dimension is not None
+        safety_can_truncate or options.mps_max_bond_dimension is not None
         or options.mps_truncation_threshold is not None
     )
     warnings = [
@@ -84,6 +90,8 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
         top_k=options.top_k_states,
     )
     if state_analysis is not None and state_analysis.get("available") and truncation_configured:
+        state_analysis["global_metrics"]["exact"] = False
+        state_analysis["global_metrics"]["exactness"] = "approximation_possible"
         state_analysis["warnings"].append(
             "An MPS bond limit or truncation threshold was configured for this run; the displayed "
             "state may be approximate rather than exact."
@@ -109,7 +117,8 @@ def run(request: Any, options: Any, analysis: dict[str, Any]) -> EngineResult:
                 "Exactness depends on retaining the required bond dimension; "
                 "this API does not report discarded weight."
             ),
-            "mps_max_bond_dimension": options.mps_max_bond_dimension,
+            "mps_max_bond_dimension": effective_bond,
+            "requested_mps_max_bond_dimension": requested_bond,
             "mps_truncation_threshold": options.mps_truncation_threshold,
         },
         state_analysis=state_analysis,

@@ -54,16 +54,10 @@ MAX_TOP_AMPLITUDES_QUBITS = 20
 #: returned. 2**8 == 256x256 == 65,536 complex entries.
 MAX_DENSITY_MATRIX_PAYLOAD_QUBITS = 8
 
-#: Above this qubit count, density-matrix state analysis (even metrics, not
-#: just the full-matrix payload) is skipped entirely. Matches
-#: engines/aer_density.py's own HARD_QUBIT_CAP: a 16-qubit density matrix
-#: already needs ~64 GB, so in practice the engine itself already rejects
-#: anything past this before state analysis would ever run -- this is a
-#: defense-in-depth duplicate of that limit, not a tighter one. Verified
-#: empirically that per-qubit reduction itself stays fast well past this
-#: point (14 qubits: ~7ms/qubit) -- the real constraint is holding the
-#: density matrix in memory at all, which the engine cap already governs.
-MAX_DENSITY_MATRIX_ANALYSIS_QUBITS = 15
+#: Marginals and matrix validation have their own allocation envelope.
+MAX_DENSITY_MATRIX_ANALYSIS_QUBITS = 10
+#: Full eigendecomposition is cubic in matrix dimension; cap separately.
+MAX_DENSITY_SPECTRUM_QUBITS = 8
 
 #: Schmidt decomposition / entanglement entropy needs an SVD of a reshaped
 #: amplitude vector -- O(2**n) work and memory, same order as the full
@@ -230,7 +224,7 @@ def bloch_vector(rho1: np.ndarray) -> tuple[float, float, float]:
 
 
 def purity(rho: np.ndarray) -> float:
-    return _clamp_probability(float(np.real(np.trace(rho @ rho))))
+    return _clamp_probability(float(np.sum(np.abs(rho) ** 2)))
 
 
 def von_neumann_entropy(rho: np.ndarray) -> float:
@@ -520,11 +514,11 @@ def density_matrix_analysis(
         result_warnings.append(f"Density matrix is not Hermitian within tolerance (max deviation {hermiticity_error:.2e}).")
 
     global_purity = purity(rho)
-    eigenvalues = np.clip(np.linalg.eigvalsh(rho).real, 0.0, 1.0)
-    global_entropy = 0.0
-    for p in eigenvalues:
-        if p > 1e-12:
-            global_entropy -= p * math.log2(p)
+    eigenvalues = (np.clip(np.linalg.eigvalsh(rho).real, 0.0, 1.0)
+                   if num_qubits <= MAX_DENSITY_SPECTRUM_QUBITS else None)
+    global_entropy = None if eigenvalues is None else sum(-float(p) * math.log2(float(p)) for p in eigenvalues if p > 1e-12)
+    if eigenvalues is None:
+        result_warnings.append("Entropy and spectrum omitted above 8 qubits to bound cubic eigendecomposition work.")
 
     basis_probabilities = None
     diag = np.real(np.diag(rho))
@@ -595,13 +589,16 @@ def density_matrix_analysis(
             "payload_truncated": include_full_matrix and density_matrix_json is None,
             "trace": _clamp_tiny(trace.real),
             "hermiticity_error": hermiticity_error,
-            "von_neumann_entropy_bits": _clamp_tiny(max(0.0, global_entropy)),
+            "von_neumann_entropy_bits": None if global_entropy is None else _clamp_tiny(max(0.0, global_entropy)),
             # Descending spectrum of the density matrix (clamped to [0, 1]).
             # A pure state is one eigenvalue ~1 and the rest ~0; entropy above
             # is computed from exactly this list. Capped to the 64 largest so
             # a 15-qubit matrix (32768 eigenvalues) cannot bloat the payload;
             # the tail beyond any physically meaningful rank is ~0 anyway.
-            "eigenvalues": [_clamp_tiny(float(v)) for v in sorted(eigenvalues, reverse=True)[:64]],
+            "eigenvalues": None if eigenvalues is None else [_clamp_tiny(float(v)) for v in sorted(eigenvalues, reverse=True)[:64]],
+            "spectrum_total_count": len(rho),
+            "spectrum_returned_count": 0 if eigenvalues is None else min(64, len(eigenvalues)),
+            "spectrum_omitted_weight": None if eigenvalues is None else float(sum(sorted(eigenvalues, reverse=True)[64:])),
             "mixed_state_note": "This is a mixed-state density matrix, not a pure statevector -- purity below 1 reflects genuine noise/decoherence, not measurement error.",
         },
         "warnings": result_warnings,
