@@ -85,3 +85,34 @@ it("does not overwrite an external project edit with a stale tab", () => {
   expect(projects.save(project.id, { ...empty, shots: 222 }).ok).toBe(false);
   expect(JSON.parse(localStorage.getItem(key)!).projects[0].circuit.shots).toBe(999);
 });
+
+it("reuses the remapped graph when the same colliding bundle is imported twice", () => {
+  gates.save(definition("child", "z"));
+  gates.save(definition("parent", "custom:child"));
+  const incoming = bundle([definition("parent", "custom:child"), definition("child", "x")]);
+  const first = gates.importMany(incoming);
+  const count = gates.list().length;
+  const second = gates.importMany(incoming);
+  expect(second.ok).toBe(true);
+  expect(second.value!.idMap).toEqual(first.value!.idMap);
+  expect(second.value!.imported).toBe(0);
+  expect(gates.list()).toHaveLength(count);
+});
+it("handles definition IDs that are JavaScript prototype property names", () => {
+  const result = gates.importMany(bundle([definition("__proto__", "x"), definition("parent", "custom:__proto__")]));
+  expect(result.ok).toBe(true);
+  expect(Object.hasOwn(result.value!.idMap, "__proto__")).toBe(true);
+  expect(resolvedGate(circuit)).toBe("x");
+});
+
+it("rejects an import whose nested custom gate has the wrong operand count", () => {
+  const child = { ...definition("child", "x"), numQubits: 2 };
+  expect(gates.importMany(bundle([child, definition("parent", "custom:child")])).ok).toBe(false);
+  expect(gates.list()).toHaveLength(0);
+});
+it("preserves dependent gates when a child edit would invalidate their operands", () => {
+  gates.save(definition("child", "x"));
+  gates.save(definition("parent", "custom:child"));
+  expect(gates.save({ ...definition("child", "x"), numQubits: 2 }).ok).toBe(false);
+  expect(resolvedGate(circuit)).toBe("x");
+});

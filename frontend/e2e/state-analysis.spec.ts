@@ -89,7 +89,7 @@ test("Probabilities view distinguishes exact theoretical values from sampled cou
   await runAndOpenQuantumState(page);
 
   await page.getByRole("button", { name: "Probabilities" }).click();
-  await expect(page.getByText(/exact theoretical probabilities/)).toBeVisible();
+  await expect(page.getByText(/theoretical probabilities computed from the returned quantum state/)).toBeVisible();
   await expect(page.getByText(/not sampled shot counts/)).toBeVisible();
 
   // The Distribution tab (sampled counts) coexists and is clearly separate.

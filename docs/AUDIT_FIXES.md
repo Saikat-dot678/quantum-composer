@@ -60,3 +60,17 @@ Project snapshots restore saved definitions even if the shared library changed. 
 - `requirements-tested-py312.txt` records the complete clean Python 3.12 verification environment; the normal requirement files retain their supported ranges.
 - Browser execution could not be completed locally because the Playwright Chromium download returned corrupt/truncated archives. The connected CI job is included but must pass in GitHub before browser-level validation is claimed.
 - Live IBM account authentication was not exercised with real credentials; account boundaries use mocked provider objects and real local/fake-target compilation tests.
+
+## PR follow-up (10 October 2026)
+
+The refreshed remote `main` remains at `e108b5d`; GitHub reports no textual merge conflict. The actual blockers were the draft status and two failed CI jobs: Node 20 could not run the new jsdom dependencies, and a connected browser assertion expected wording that changed when approximate states were labeled correctly.
+
+- Standardize development and CI on Node 24.15+ within major 24, with package engines and `.nvmrc` guidance.
+- Update the probability browser assertion to the current scientific wording while retaining the check that it is separate from sampled counts.
+- Make repeated imports reuse an already-remapped dependency graph, including collision cases; avoid storage writes for an unchanged import.
+- Handle special definition IDs such as `__proto__` with a prototype-free ID map.
+- Validate custom-operation operand counts and revalidate dependents before accepting a child-definition edit.
+- Restore an unchanged saved project without requiring a redundant write; preserve the active project and unsaved state when a remapped restoration cannot be saved.
+- Apply compatible dependency security updates, including Next.js 15.5.27 and Vitest 4.1.11. Remaining audit findings are in the Tailwind 3 / ESLint build dependency chain; npm proposes breaking framework migrations, not compatible fixes. These still need a separate, tested toolchain migration and must not be described as resolved.
+
+Local follow-up verification: 293 backend tests passed; 187 frontend tests, TypeScript, and ESLint passed with the refreshed dependency lockfile. The production dependency audit reports zero vulnerabilities; nine findings remain in development/build dependencies. Browser binaries still fail to download in this execution environment, so browser verification is performed by the PR's GitHub Actions jobs.

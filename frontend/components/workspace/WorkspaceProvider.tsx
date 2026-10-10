@@ -237,15 +237,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     let restored = cloneCircuit(PRESETS[1].circuit);
     let restoredProjectId: string | null = null;
     let restoredProjectName: string | null = null;
+    let restoreSaveError: string | null = null;
     try {
       const lastProjectId = getLastActiveProjectId();
       const project = lastProjectId ? getProject(lastProjectId) : null;
       if (project) {
         restored = restoreProjectCircuit(project);
-        const saved = updateProjectCircuit(project.id, restored);
-        if (!saved.ok) throw new Error(saved.reason);
         restoredProjectId = project.id;
         restoredProjectName = project.name;
+        if (fingerprint(restored) !== fingerprint(project.circuit)) {
+          const saved = updateProjectCircuit(project.id, restored);
+          if (!saved.ok) restoreSaveError = saved.reason ?? "The restored project could not be saved.";
+        }
         touchProject(project.id);
       } else {
         const raw = window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
@@ -260,13 +263,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setStorageNotice("Local workspace storage could not be read. The default Bell circuit was kept.");
     }
     circuitRef.current = restored;
-    savedFingerprint.current = fingerprint(restored);
+    savedFingerprint.current = restoreSaveError ? "" : fingerprint(restored);
     setCircuitState(restored);
     setActiveProjectId(restoredProjectId);
     activeProjectRef.current = restoredProjectId;
     setActiveProjectName(restoredProjectName);
-    setSaveState("saved");
-    setLastSavedAt(restoredProjectId ? Date.now() : null);
+    setSaveState(restoreSaveError ? "error" : "saved");
+    setSaveError(restoreSaveError);
+    setLastSavedAt(restoredProjectId && !restoreSaveError ? Date.now() : null);
     setHydrated(true);
   }, []);
 

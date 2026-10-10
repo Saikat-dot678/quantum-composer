@@ -3,7 +3,7 @@ import React from "react";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WorkspaceProvider, useWorkspace } from "./WorkspaceProvider";
-import { getProject } from "@/lib/projects";
+import { getProject, saveNewProject, setLastActiveProjectId } from "@/lib/projects";
 
 beforeEach(() => { localStorage.clear(); sessionStorage.clear(); vi.useFakeTimers(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -47,4 +47,14 @@ it("flushes on pagehide before the debounce timer fires", () => {
   act(() => { result.current.setCircuit(value => ({ ...value, shots: 222 })); });
   act(() => { window.dispatchEvent(new Event("pagehide")); });
   expect(getProject(id)?.circuit.shots).toBe(222);
+});
+
+it("opens an already-saved project even when storage becomes read-only", () => {
+  const saved = saveNewProject("Read only", { num_qubits: 2, num_clbits: 2, shots: 321, operations: [] }).value!;
+  setLastActiveProjectId(saved.id);
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
+  const { result } = mount();
+  expect(result.current.activeProjectId).toBe(saved.id);
+  expect(result.current.circuit.shots).toBe(321);
+  expect(result.current.saveState).toBe("saved");
 });

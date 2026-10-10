@@ -228,6 +228,9 @@ export function validateSteps(
       if (!referenced) {
         return { ok: false, reason: `Step ${index + 1}: references a custom gate that no longer exists in the library ("${customId}").` };
       }
+      if (step.qubits.length !== definitionNumQubits(referenced) || step.clbits.length !== definitionNumClbits(referenced)) {
+        return { ok: false, reason: `Step ${index + 1}: "${referenced.name}" requires ${definitionNumQubits(referenced)} qubit(s) and ${definitionNumClbits(referenced)} classical bit(s).` };
+      }
       const nested = expandStepsForValidation(referenced, library, context.ownId ? new Set([context.ownId]) : new Set(), 1);
       if (!nested.ok) return { ok: false, reason: `Step ${index + 1}: ${nested.reason}` };
       expandedCount += nested.expandedCount ?? 1;

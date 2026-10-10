@@ -210,7 +210,7 @@ The monorepo contains `frontend/` (Next.js/TypeScript/Tailwind), `backend/`
 
 ## Prerequisites
 
-Python 3.11/3.12 and Node.js 20+ are recommended.
+Python 3.11/3.12 and Node.js 24 (24.15 or newer) are supported. The frontend DOM test dependencies require this Node version; use `nvm use` inside `frontend` to match CI.
 
 ## Run the backend
 

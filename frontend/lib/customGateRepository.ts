@@ -151,8 +151,12 @@ export const localCustomGateRepository: CustomGateRepository = {
   save: (def) => {
     const definitions = readStore();
     const others = definitions.filter((d) => d.id !== def.id);
-    const check = validateDefinition(def, libraryMap([...others, def]));
-    if (!check.ok) return { ok: false, reason: check.reason };
+    const candidates = [...others, def];
+    const candidateMap = libraryMap(candidates);
+    for (const candidate of candidates) {
+      const check = validateDefinition(candidate, candidateMap);
+      if (!check.ok) return { ok: false, reason: `"${candidate.name}": ${check.reason}` };
+    }
     const index = findIndex(definitions, def.id);
     const now = Date.now();
     const next: CustomDefinition = { ...def, updatedAt: now, createdAt: index >= 0 ? definitions[index].createdAt : (def.createdAt || now) };
@@ -255,43 +259,49 @@ export const localCustomGateRepository: CustomGateRepository = {
         return child !== null && !incomingIds.has(child);
       })) return { ok: false, reason: `Imported definition "${def.name}" is missing a bundled dependency.` };
     }
-    const idMap: Record<string, string> = {};
-    for (const def of definitions) {
-      const previous = existingMap.get(def.id);
-      idMap[def.id] = previous && !definitionsEquivalent(previous, def) ? makeId() : def.id;
-    }
-    // A parent identical in isolation is different when one of its children
-    // was remapped. Propagate that change through the entire dependency graph.
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const def of definitions) {
-        if (def.kind === "matrix" || idMap[def.id] !== def.id || !existingMap.has(def.id)) continue;
-        if (def.steps.some(step => {
-          const child = parseCustomGateRef(step.gate);
-          return child !== null && child in idMap && idMap[child] !== child;
-        })) { idMap[def.id] = makeId(); changed = true; }
-      }
-    }
+    const idMap: Record<string, string> = Object.create(null);
+    const incomingMap = libraryMap(definitions);
+    const visiting = new Set<string>();
     const renamed: string[] = [];
     const names = new Set(existing.map(def => def.name.toLowerCase()));
     const merged = [...existing];
-    for (const def of definitions) {
-      if (idMap[def.id] === def.id && existingMap.has(def.id)) continue;
-      let candidate = { ...def, id: idMap[def.id] };
+    const comparable = (def: CustomDefinition): CustomDefinition => ({
+      ...def, id: "", name: "",
+    });
+    // Resolve children first, so repeated imports can reuse the same complete
+    // graph even when its original IDs collide with the local library.
+    const importDefinition = (id: string): string => {
+      if (Object.hasOwn(idMap, id)) return idMap[id];
+      if (visiting.has(id)) throw new Error("The imported library contains a dependency cycle.");
+      visiting.add(id);
+      const definition = incomingMap.get(id)!;
+      let candidate = { ...definition };
       if (candidate.kind !== "matrix") {
         candidate = { ...candidate, steps: candidate.steps.map(step => {
           const child = parseCustomGateRef(step.gate);
-          return child === null ? step : { ...step, gate: customGateRef(idMap[child]) };
+          return child === null ? step : { ...step, gate: customGateRef(importDefinition(child)) };
         }) };
       }
-      if (names.has(candidate.name.toLowerCase())) {
-        candidate = { ...candidate, name: `${candidate.name.slice(0, 45)} (imported)` };
-        renamed.push(candidate.name);
+      const equivalent = merged.find(previous =>
+        (previous.name === candidate.name || previous.name === `${candidate.name.slice(0, 45)} (imported)`) &&
+        definitionsEquivalent(comparable(previous), comparable(candidate)));
+      if (equivalent) {
+        idMap[id] = equivalent.id;
+      } else {
+        candidate = { ...candidate, id: existingMap.has(id) ? makeId() : id };
+        if (names.has(candidate.name.toLowerCase())) {
+          candidate = { ...candidate, name: `${candidate.name.slice(0, 45)} (imported)` };
+          renamed.push(candidate.name);
+        }
+        names.add(candidate.name.toLowerCase());
+        merged.push(candidate);
+        idMap[id] = candidate.id;
       }
-      names.add(candidate.name.toLowerCase());
-      merged.push(candidate);
-    }
+      visiting.delete(id);
+      return idMap[id];
+    };
+    try { for (const definition of definitions) importDefinition(definition.id); }
+    catch (error) { return { ok: false, reason: error instanceof Error ? error.message : "Invalid dependency graph." }; }
     if (merged.length > MAX_CUSTOM_DEFINITIONS) {
       return { ok: false, reason: `Import would exceed the ${MAX_CUSTOM_DEFINITIONS}-gate limit. No definitions were imported.` };
     }
@@ -300,8 +310,9 @@ export const localCustomGateRepository: CustomGateRepository = {
       const check = validateDefinition(def, mergedMap);
       if (!check.ok) return { ok: false, reason: check.reason };
     }
-    const imported = definitions.length;
-    const skipped = 0;
+    const imported = merged.length - existing.length;
+    const skipped = definitions.length - imported;
+    if (imported === 0) return { ok: true, value: { imported, skipped, renamed, idMap } };
 
     const written = writeStore(merged);
     if (!written.ok) return { ok: false, reason: written.reason };
